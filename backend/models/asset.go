@@ -1,5 +1,10 @@
 package models
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 type ExifInfo struct {
 	FileSizeInByte  int64    `json:"fileSizeInByte"`
 	ExifImageWidth  int      `json:"exifImageWidth"`
@@ -28,12 +33,35 @@ type Asset struct {
 	FileCreatedAt    string    `json:"fileCreatedAt"`
 	FileModifiedAt   string    `json:"fileModifiedAt"`
 	LocalDateTime    string    `json:"localDateTime"`
-	Duration         string    `json:"duration"`
+	Duration         Duration  `json:"duration"`
 	IsFavorite       bool      `json:"isFavorite"`
 	CreatedAt        string    `json:"createdAt"`
 	UpdatedAt        string    `json:"updatedAt"`
 	ThumbURL         string    `json:"thumbUrl,omitempty"`
 	ExifInfo         *ExifInfo `json:"exifInfo,omitempty"`
+}
+
+// Duration accepts either Immich's "H:MM:SS" string or a numeric seconds
+// value (some server versions return a number) and normalizes to a string.
+type Duration string
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*d = Duration(s)
+		return nil
+	}
+	var sec float64
+	if err := json.Unmarshal(b, &sec); err != nil {
+		return err
+	}
+	*d = Duration(formatSeconds(sec))
+	return nil
+}
+
+func formatSeconds(sec float64) string {
+	total := int64(sec + 0.5)
+	return fmt.Sprintf("%d:%02d:%02d", total/3600, (total%3600)/60, total%60)
 }
 
 type UploadQueueItem struct {
