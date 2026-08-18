@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { getThumbUrl } from '../lib/thumbCache';
+  import { ROW_HEIGHT } from '../lib/gallery';
 
   export interface Asset {
     id: string;
@@ -11,6 +12,7 @@
   }
 
   export let assets: Asset[] = [];
+  export let offset = 0; // global start index, so lightbox indexes stay valid
 
   const dispatch = createEventDispatcher<{ select: number }>();
 
@@ -56,26 +58,30 @@
   }
 </script>
 
-<div class="grid grid-cols-3 gap-1 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
+<div class="flex flex-wrap items-start gap-1">
   {#each assets as asset, i (asset.id)}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
-      class="group relative aspect-square cursor-pointer overflow-hidden rounded bg-[#313244]"
+      class="group relative cursor-pointer overflow-hidden rounded bg-[#313244]"
+      style="min-height:{ROW_HEIGHT}px;"
       use:lazyThumb={asset.id}
-      on:click={() => dispatch('select', i)}
+      on:click={() => dispatch('select', offset + i)}
     >
       {#if asset.id in thumbPromises}
         {#await thumbPromises[asset.id]}
-          <div class="h-full w-full animate-pulse bg-[#45475a]" />
+          <div class="h-[{ROW_HEIGHT}px] w-40 animate-pulse bg-[#45475a]" />
         {:then url}
           {#if url}
+            <!-- img drives its own width from the intrinsic aspect ratio:
+                 fixed height, auto width, no crop -->
             <img
               src={url}
               alt="thumbnail"
-              class="h-full w-full object-cover transition duration-200 group-hover:scale-105 group-hover:brightness-90"
+              class="block transition duration-200 group-hover:brightness-90"
+              style="height:{ROW_HEIGHT}px; width:auto; max-width:100%;"
             />
           {:else}
-            <div class="flex h-full w-full items-center justify-center text-[#585b70]">
+            <div class="flex h-[{ROW_HEIGHT}px] w-40 items-center justify-center text-[#585b70]">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
                 <circle cx="8.5" cy="8.5" r="1.5"/>
@@ -84,7 +90,7 @@
             </div>
           {/if}
         {:catch}
-          <div class="flex h-full w-full items-center justify-center text-[#585b70]">
+          <div class="flex h-[{ROW_HEIGHT}px] w-40 items-center justify-center text-[#585b70]">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <circle cx="8.5" cy="8.5" r="1.5"/>
@@ -93,7 +99,7 @@
           </div>
         {/await}
       {:else}
-        <div class="h-full w-full bg-[#313244]" />
+        <div class="h-[{ROW_HEIGHT}px] w-40 bg-[#313244]" />
       {/if}
 
       {#if asset.type === 'VIDEO'}

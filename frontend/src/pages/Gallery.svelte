@@ -1,32 +1,63 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { GetAssets, GetAlbums, GetAlbumAssets } from '../../wailsjs/go/main/App';
   import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
   import PhotoGrid from '../components/PhotoGrid.svelte';
   import Lightbox from '../components/Lightbox.svelte';
+  import TimelineRail from '../components/TimelineRail.svelte';
+  import { groupByDate, buildTimeline, type Group } from '../lib/gallery';
   import { getThumbUrl } from '../lib/thumbCache';
+
+  // Timeline grouping (photos view only)
+  $: groups = view === 'photos' ? groupByDate(allAssets) : ([] as Group<Asset>[]);
+  $: displayAssets = groups.flatMap((g) => g.assets);
+  $: timeline = buildTimeline(groups);
+  let activeDateKey: string | null = null;
+
+  $: activeYear = activeDateKey
+    ? (groups.find((g) => g.key === activeDateKey)?.date?.getFullYear() ?? null)
+    : null;
+  $: activeMonth = activeDateKey
+    ? (groups.find((g) => g.key === activeDateKey)?.date?.getMonth() ?? null)
+    : null;
+
+  // Scroll container + offset tracking
+  let scrollEl: HTMLDivElement;
+  const offsets = new Map<string, number>();
+  let measured = false;
+  const scrollWatcher = (): void => {
+    if (!scrollEl) return;
+    const top = scrollEl.scrollTop + 20;
+    let current: string | null = null;
+    for (const g of groups) {
+      const off = offsets.get(g.key);
+      if (off !== undefined && off <= top) current = g.key;
+    }
+    if (current !== activeDateKey) activeDateKey = current;
+  };
+
+  $: if (groups.length && scrollEl && !measured) {
+    tick().then(() => {
+      scrollEl.querySelectorAll<HTMLElement>('[data-datekey]').forEach((el) => {
+        offsets.set(el.dataset.datekey!, el.offsetTop);
+      });
+      measured = true;
+      scrollWatcher();
+    });
+  }
+
+  function scrollToGroup(key: string): void {
+    const off = offsets.get(key);
+    if (off !== undefined && scrollEl) scrollEl.scrollTo({ top: off, behavior: 'smooth' });
+  }
+
+  function selectTimeline(year: number, month: number): void {
+    const g = groups.find((x) => x.date?.getFullYear() === year && x.date?.getMonth() === month);
+    if (g) scrollToGroup(g.key);
+  }
 
   let pendingUploads = 0;
   let gridKey = 0;
-
-  interface ExifInfo {
-    fileSizeInByte?: number;
-    exifImageWidth?: number;
-    exifImageHeight?: number;
-    make?: string;
-    model?: string;
-    lensModel?: string;
-    fNumber?: number;
-    focalLength?: number;
-    iso?: number;
-    exposureTime?: string;
-    latitude?: number | null;
-    longitude?: number | null;
-    city?: string;
-    state?: string;
-    country?: string;
-    description?: string;
-  }
 
   interface Asset {
     id: string;
@@ -38,7 +69,24 @@
     fileModifiedAt?: string;
     duration?: string;
     isFavorite?: boolean;
-    exifInfo?: ExifInfo;
+    exifInfo?: {
+      exifImageWidth?: number;
+      exifImageHeight?: number;
+      fileSizeInByte?: number;
+      make?: string;
+      model?: string;
+      lensModel?: string;
+      fNumber?: number;
+      focalLength?: number;
+      iso?: number;
+      exposureTime?: string;
+      latitude?: number | null;
+      longitude?: number | null;
+      city?: string;
+      state?: string;
+      country?: string;
+      description?: string;
+    };
   }
 
   interface Album {
@@ -62,7 +110,7 @@
 
   let lightboxIndex = -1;
   $: lightboxOpen = lightboxIndex >= 0;
-  $: lightboxAssets = openAlbum ? albumAssets : allAssets;
+  $: lightboxAssets = openAlbum ? albumAssets : displayAssets;
 
   onMount(() => {
     loadData();
@@ -77,6 +125,9 @@
     loading = true;
     error = '';
     pendingUploads = 0;
+    measured = false;
+    offsets.clear();
+    activeDateKey = null;
     try {
       const [a, al] = await Promise.all([GetAssets(), GetAlbums()]);
       allAssets = (a as Asset[]) ?? [];
@@ -177,7 +228,12 @@
     </div>
   </div>
 
-  <div class="flex-1 overflow-y-auto p-4">
+  <div class="flex flex-1 overflow-hidden">
+    <div
+      bind:this={scrollEl}
+      on:scroll={scrollWatcher}
+      class="relative flex-1 overflow-y-auto p-4 pr-2"
+    >
     {#if openAlbum}
       {#if albumError}
         <div class="rounded-lg bg-red-900/40 border border-red-500/50 px-4 py-3 text-sm text-red-300">{albumError}</div>
@@ -210,7 +266,12 @@
         </div>
       {:else}
         {#key gridKey}
-          <PhotoGrid assets={allAssets} on:select={(e) => (lightboxIndex = e.detail)} />
+          {#each groups as group (group.key)}
+            <div class="mb-6">
+              <div class="mb-2 text-sm font-semibold text-[#cdd6f4]" data-datekey={group.key}>{group.label}</div>
+              <PhotoGrid assets={group.assets} offset={group.start} on:select={(e) => (lightboxIndex = e.detail)} />
+            </div>
+          {/each}
         {/key}
       {/if}
 
@@ -258,6 +319,13 @@
           {/each}
         </div>
       {/if}
+    {/if}
+    </div>
+
+    {#if view === 'photos' && !openAlbum && groups.length > 0}
+      <div class="w-12 flex-shrink-0 overflow-y-auto py-4">
+        <TimelineRail {timeline} {activeYear} {activeMonth} onSelect={selectTimeline} />
+      </div>
     {/if}
   </div>
 </div>
