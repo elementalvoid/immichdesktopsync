@@ -28,7 +28,7 @@ export function GetServerVersion():Promise<string>;
 
 export function GetStreamPort():Promise<number>;
 
-export function GetThumbnail(arg1:string):Promise<Array<number>>;
+export function GetThumbnail(arg1:string,arg2:string):Promise<Array<number>>;
 
 export function GetUploadQueue():Promise<Array<models.UploadQueueItem>>;
 

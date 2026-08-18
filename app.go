@@ -200,9 +200,14 @@ func (a *App) GetStreamPort() int {
 	return a.proxy.Port()
 }
 
-func (a *App) GetThumbnail(assetID string) ([]byte, error) {
+func (a *App) GetThumbnail(assetID, size string) ([]byte, error) {
+	if size == "" {
+		size = "thumb"
+	}
+	key := assetID + ":" + size
+
 	if a.db != nil {
-		if cached, err := a.db.GetThumbnail(assetID); err == nil && cached != nil {
+		if cached, err := a.db.GetThumbnail(key); err == nil && cached != nil {
 			return cached, nil
 		}
 	}
@@ -211,17 +216,17 @@ func (a *App) GetThumbnail(assetID string) ([]byte, error) {
 	defer func() { <-a.thumbSem }()
 
 	if a.db != nil {
-		if cached, err := a.db.GetThumbnail(assetID); err == nil && cached != nil {
+		if cached, err := a.db.GetThumbnail(key); err == nil && cached != nil {
 			return cached, nil
 		}
 	}
 
-	data, err := a.client.GetThumbnail(assetID)
+	data, err := a.client.FetchThumbnail(assetID, size)
 	if err != nil {
 		return nil, err
 	}
 	if a.db != nil {
-		_ = a.db.CacheThumbnail(assetID, data)
+		_ = a.db.CacheThumbnail(key, data)
 	}
 	return data, nil
 }

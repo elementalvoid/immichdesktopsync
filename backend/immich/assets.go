@@ -229,8 +229,11 @@ func (c *Client) GetAssetInfo(assetID string) (*models.Asset, error) {
 	return &asset, nil
 }
 
-func (c *Client) GetThumbnail(assetID string) ([]byte, error) {
-	resp, err := c.doThumb("GET", fmt.Sprintf("/api/assets/%s/thumbnail?size=preview", assetID))
+func (c *Client) FetchThumbnail(assetID, size string) ([]byte, error) {
+	if size == "" {
+		size = "thumbnail"
+	}
+	resp, err := c.doThumb("GET", fmt.Sprintf("/api/assets/%s/thumbnail?size=%s", assetID, size))
 	if err != nil {
 		return nil, err
 	}

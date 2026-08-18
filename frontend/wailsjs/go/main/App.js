@@ -54,8 +54,8 @@ export function GetStreamPort() {
   return window['go']['main']['App']['GetStreamPort']();
 }
 
-export function GetThumbnail(arg1) {
-  return window['go']['main']['App']['GetThumbnail'](arg1);
+export function GetThumbnail(arg1, arg2) {
+  return window['go']['main']['App']['GetThumbnail'](arg1, arg2);
 }
 
 export function GetUploadQueue() {

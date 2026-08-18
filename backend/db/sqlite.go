@@ -197,17 +197,17 @@ func (d *DB) GetFolders() ([]string, error) {
 	return folders, rows.Err()
 }
 
-func (d *DB) CacheThumbnail(assetID string, data []byte) error {
+func (d *DB) CacheThumbnail(key string, data []byte) error {
 	_, err := d.conn.Exec(
 		`INSERT OR REPLACE INTO thumbnail_cache (asset_id, data, cached_at) VALUES (?,?,?)`,
-		assetID, data, time.Now().UTC().Format(time.RFC3339),
+		key, data, time.Now().UTC().Format(time.RFC3339),
 	)
 	return err
 }
 
-func (d *DB) GetThumbnail(assetID string) ([]byte, error) {
+func (d *DB) GetThumbnail(key string) ([]byte, error) {
 	var data []byte
-	err := d.conn.QueryRow(`SELECT data FROM thumbnail_cache WHERE asset_id=?`, assetID).Scan(&data)
+	err := d.conn.QueryRow(`SELECT data FROM thumbnail_cache WHERE asset_id=?`, key).Scan(&data)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

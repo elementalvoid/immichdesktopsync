@@ -48,11 +48,11 @@
 
   // ── Images ──────────────────────────────────────────────────────────────────
   let imgPromise: Promise<string> = Promise.resolve('');
-  $: if (asset && !isVideo) imgPromise = getThumbUrl(asset.id);
+  $: if (asset && !isVideo) imgPromise = getThumbUrl(asset.id, 'preview');
 
   $: {
-    if (index > 0) getThumbUrl(assets[index - 1].id);
-    if (index < assets.length - 1) getThumbUrl(assets[index + 1].id);
+    if (index > 0) getThumbUrl(assets[index - 1].id, 'preview');
+    if (index < assets.length - 1) getThumbUrl(assets[index + 1].id, 'preview');
   }
 
   // ── Video streaming ──────────────────────────────────────────────────────────
