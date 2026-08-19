@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { getThumbUrl } from '../lib/thumbCache';
-  import { DownloadAsset, GetStreamPort, GetAssetInfo } from '../../wailsjs/go/main/App';
+  import { DownloadAsset, GetStreamPort, GetAssetInfo } from '../../bindings/immich-desktop-sync/app';
 
   export interface ExifInfo {
     fileSizeInByte?: number;

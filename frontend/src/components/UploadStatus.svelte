@@ -1,7 +1,7 @@
 <script lang="ts">
   import { uploads } from '../stores/uploads';
   import type { UploadQueueItem } from '../stores/uploads';
-  import { RetryFailed } from '../../wailsjs/go/main/App';
+  import { RetryFailed } from '../../bindings/immich-desktop-sync/app';
 
   $: queue = $uploads.queue;
   $: pending = queue.filter(i => i.status === 'pending').length;

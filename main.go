@@ -7,9 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"immich-desktop-sync/backend"
 )
@@ -30,28 +29,32 @@ func setupLogging() {
 func main() {
 	setupLogging()
 
-	app := NewApp()
+	app := application.New(application.Options{
+		Name: "Immich Desktop Sync",
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
+		},
+	})
 
-	err := wails.Run(&options.App{
+	svc := NewApp(app)
+	app.RegisterService(application.NewService(svc))
+
+	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Immich Desktop Sync",
 		Width:            1200,
 		Height:           800,
 		MinWidth:         800,
 		MinHeight:        600,
-		BackgroundColour: &options.RGBA{R: 17, G: 17, B: 27, A: 1},
-		DragAndDrop: &options.DragAndDrop{
-			EnableFileDrop: true,
-		},
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
-		Bind: []interface{}{
-			app,
-		},
+		BackgroundColour: application.NewRGB(17, 17, 27),
+		EnableFileDrop:   true,
 	})
-	if err != nil {
+	window.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
+		svc.handleFileDrop(e.Context().DroppedFiles())
+	})
+
+	app.OnShutdown(svc.shutdown)
+
+	if err := app.Run(); err != nil {
 		log.Fatalf("wails: %v", err)
 	}
 }

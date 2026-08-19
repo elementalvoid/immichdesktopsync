@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { GetUploadQueue, GetFolders, AddFolder, RemoveFolder, SelectFolder } from '../../wailsjs/go/main/App';
+import { GetUploadQueue, GetFolders, AddFolder, RemoveFolder, SelectFolder } from '../../bindings/immich-desktop-sync/app';
 
 export interface UploadQueueItem {
   id: number;

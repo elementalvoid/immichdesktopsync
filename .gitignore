@@ -1,7 +1,6 @@
 # Build output
-build/bin/
-build/darwin/
-build/windows/
+bin/
+.task/
 
 # Frontend
 frontend/node_modules/

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
-  import { GetAssets, GetAlbums, GetAlbumAssets } from '../../wailsjs/go/main/App';
-  import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
+  import { GetAssets, GetAlbums, GetAlbumAssets } from '../../bindings/immich-desktop-sync/app';
+  import { Events } from '@wailsio/runtime';
   import PhotoGrid from '../components/PhotoGrid.svelte';
   import Lightbox from '../components/Lightbox.svelte';
   import TimelineRail from '../components/TimelineRail.svelte';
@@ -114,11 +114,11 @@
 
   onMount(() => {
     loadData();
-    EventsOn('upload:done', () => { pendingUploads++; });
+    Events.On('upload:done', () => { pendingUploads++; });
   });
 
   onDestroy(() => {
-    EventsOff('upload:done');
+    Events.Off('upload:done');
   });
 
   async function loadData() {

@@ -6,7 +6,7 @@
   import Gallery from './pages/Gallery.svelte';
   import Settings from './pages/Settings.svelte';
   import UploadStatus from './components/UploadStatus.svelte';
-  import { EventsOn, EventsOff, OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
+  import { Events } from '@wailsio/runtime';
 
   type Page = 'gallery' | 'settings';
   let page: Page = 'gallery';
@@ -20,19 +20,14 @@
       uploads.startPolling();
     }
 
-    OnFileDrop((_x, _y, _paths) => {
-      dragCounter = 0;
-      isDragging = false;
-    }, false);
-
-    EventsOn('files:dropped', () => {
+    Events.On('files:dropped', () => {
       dragCounter = 0;
       isDragging = false;
       uploads.refresh();
     });
 
-    EventsOn('upload:started', () => uploads.refresh());
-    EventsOn('upload:done', () => uploads.refresh());
+    Events.On('upload:started', () => uploads.refresh());
+    Events.On('upload:done', () => uploads.refresh());
 
     window.addEventListener('dragenter', onDragEnter);
     window.addEventListener('dragleave', onDragLeave);
@@ -40,10 +35,7 @@
 
   onDestroy(() => {
     uploads.stopPolling();
-    OnFileDropOff();
-    EventsOff('files:dropped');
-    EventsOff('upload:started');
-    EventsOff('upload:done');
+    Events.Off('files:dropped', 'upload:started', 'upload:done');
     window.removeEventListener('dragenter', onDragEnter);
     window.removeEventListener('dragleave', onDragLeave);
   });

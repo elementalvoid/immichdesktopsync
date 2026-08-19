@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"immich-desktop-sync/backend"
 	"immich-desktop-sync/backend/db"
@@ -16,7 +16,7 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
+	app      *application.App
 	cfg      *models.Config
 	db       *db.DB
 	client   *immich.Client
@@ -27,13 +27,11 @@ type App struct {
 	thumbSem chan struct{}
 }
 
-func NewApp() *App {
-	return &App{thumbSem: make(chan struct{}, 8)}
+func NewApp(app *application.App) *App {
+	return &App{app: app, thumbSem: make(chan struct{}, 8)}
 }
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	cfg, err := backend.LoadConfig()
 	if err != nil {
 		log.Printf("startup: load config: %v", err)
@@ -67,39 +65,11 @@ func (a *App) startup(ctx context.Context) {
 
 	if a.db != nil {
 		a.queue = backend.NewUploadQueue(a.db, a.client,
-			func() { runtime.EventsEmit(a.ctx, "upload:started") },
-			func() { runtime.EventsEmit(a.ctx, "upload:done") },
+			func() { a.app.Event.Emit("upload:started") },
+			func() { a.app.Event.Emit("upload:done") },
 		)
 		a.queue.Start()
 	}
-
-	runtime.OnFileDrop(ctx, func(_, _ int, paths []string) {
-		if a.db == nil {
-			return
-		}
-		count := 0
-		for _, p := range paths {
-			if !backend.IsMediaFile(p) {
-				continue
-			}
-			uploaded, err := a.db.IsUploaded(p)
-			if err != nil {
-				log.Printf("OnFileDrop: check uploaded %s: %v", p, err)
-			}
-			if uploaded {
-				continue
-			}
-			if err := a.db.EnqueueFile(p); err != nil {
-				log.Printf("OnFileDrop: enqueue %s: %v", p, err)
-			} else {
-				count++
-			}
-		}
-		if count > 0 && a.queue != nil {
-			a.queue.Notify()
-		}
-		runtime.EventsEmit(a.ctx, "files:dropped", count)
-	})
 
 	if a.db != nil {
 		var onEnqueue func()
@@ -120,9 +90,39 @@ func (a *App) startup(ctx context.Context) {
 			fw.Start()
 		}
 	}
+	return nil
 }
 
-func (a *App) shutdown(_ context.Context) {
+// handleFileDrop enqueues dropped files and notifies the UI.
+func (a *App) handleFileDrop(paths []string) {
+	if a.db == nil {
+		return
+	}
+	count := 0
+	for _, p := range paths {
+		if !backend.IsMediaFile(p) {
+			continue
+		}
+		uploaded, err := a.db.IsUploaded(p)
+		if err != nil {
+			log.Printf("OnFileDrop: check uploaded %s: %v", p, err)
+		}
+		if uploaded {
+			continue
+		}
+		if err := a.db.EnqueueFile(p); err != nil {
+			log.Printf("OnFileDrop: enqueue %s: %v", p, err)
+		} else {
+			count++
+		}
+	}
+	if count > 0 && a.queue != nil {
+		a.queue.Notify()
+	}
+	a.app.Event.Emit("files:dropped", count)
+}
+
+func (a *App) shutdown() {
 	if a.proxy != nil {
 		a.proxy.Close()
 	}
@@ -268,10 +268,11 @@ func (a *App) RemoveFolder(path string) error {
 }
 
 func (a *App) SelectFolder() (string, error) {
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select folder to sync",
-	})
-	return path, err
+	return a.app.Dialog.OpenFile().
+		SetTitle("Select folder to sync").
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
 }
 
 func (a *App) GetUploadQueue() ([]models.UploadQueueItem, error) {

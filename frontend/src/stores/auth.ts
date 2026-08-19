@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { Login, Logout, IsAuthenticated, GetServerURL } from '../../wailsjs/go/main/App';
+import { Login, Logout, IsAuthenticated, GetServerURL } from '../../bindings/immich-desktop-sync/app';
 
 export interface User {
   id: string;

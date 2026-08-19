@@ -1,4 +1,4 @@
-import { GetThumbnail } from '../../wailsjs/go/main/App';
+import { GetThumbnail } from '../../bindings/immich-desktop-sync/app';
 
 export type ThumbSize = 'thumbnail' | 'preview';
 

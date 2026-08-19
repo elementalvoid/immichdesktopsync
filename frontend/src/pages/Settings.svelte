@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ClearCache, GetDownloadsFolder, SetDownloadsFolder, SelectFolder } from '../../wailsjs/go/main/App';
+  import { ClearCache, GetDownloadsFolder, SetDownloadsFolder, SelectFolder } from '../../bindings/immich-desktop-sync/app';
   import { auth } from '../stores/auth';
   import { uploads } from '../stores/uploads';
   import FolderList from '../components/FolderList.svelte';
