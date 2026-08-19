@@ -16,6 +16,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed build/appicon.png
+var trayIcon []byte
+
 func setupLogging() {
 	logPath := backend.LogPath()
 	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err == nil {
@@ -52,9 +55,30 @@ func main() {
 		svc.handleFileDrop(e.Context().DroppedFiles())
 	})
 
+	setupTray(app, window)
+
 	app.OnShutdown(svc.shutdown)
 
 	if err := app.Run(); err != nil {
 		log.Fatalf("wails: %v", err)
 	}
+}
+
+func setupTray(app *application.App, window application.Window) {
+	tray := app.SystemTray.New()
+	tray.SetLabel("Immich Sync")
+	tray.SetTooltip("Immich Desktop Sync")
+	if len(trayIcon) > 0 {
+		tray.SetIcon(trayIcon)
+	}
+	menu := app.NewMenu()
+	menu.Add("Open").OnClick(func(ctx *application.Context) {
+		window.Show()
+		window.Focus()
+	})
+	menu.AddSeparator()
+	menu.Add("Quit").OnClick(func(ctx *application.Context) {
+		app.Quit()
+	})
+	tray.SetMenu(menu)
 }
