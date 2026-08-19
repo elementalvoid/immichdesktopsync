@@ -3,7 +3,7 @@
   import { getThumbUrl } from '../lib/thumbCache';
   import { ROW_HEIGHT } from '../lib/gallery';
 
-  export interface Asset {
+  interface Asset {
     id: string;
     type: string;
     originalPath: string;

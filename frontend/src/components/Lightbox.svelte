@@ -3,7 +3,7 @@
   import { getThumbUrl } from '../lib/thumbCache';
   import { DownloadAsset, GetStreamPort, GetAssetInfo } from '../../bindings/immich-desktop-sync/app';
 
-  export interface ExifInfo {
+  interface ExifInfo {
     fileSizeInByte?: number;
     exifImageWidth?: number;
     exifImageHeight?: number;
@@ -22,7 +22,7 @@
     description?: string;
   }
 
-  export interface LightboxAsset {
+  interface LightboxAsset {
     id: string;
     type: string;
     originalPath: string;
