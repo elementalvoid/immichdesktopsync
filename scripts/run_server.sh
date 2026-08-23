@@ -1,33 +1,43 @@
 #!/usr/bin/env bash
-# Headless wails3 (server-mode) run script — NO GTK window, NO Xvfb needed.
+# Headless wails3 (server-mode) run script — idiomatic wails3, NO GTK/Xvfb.
 #
-# This builds & runs the wails3-plus app as a pure HTTP server (`-tags server`),
-# which is perfect for headless/browser-driven development:
-#   - the Svelte frontend is served over plain HTTP (embedded dist OR vite dev)
-#   - every frontend->Go call uses Wails3's HTTP transport (POST /wails/runtime)
-#   - the headless browser (Playwright) drives the real UI end-to-end
+# Uses the wails3 CLI + project Taskfile (the idiomatic path) to build & run the
+# app in server mode (`-tags server`). Server mode serves the Svelte frontend
+# over plain HTTP and routes every frontend->Go call through Wails3's HTTP
+# transport (POST /wails/runtime) — ideal for headless/browser-driven dev.
+#
+#   Run via:  wails3 task common:run:server DEV=true
+#   (builds + runs bin/ImmichDesktopSync-server from the embedded dist)
 #
 # Usage:
 #   ./run_server.sh            build + run server-mode (port 3823)
 #   ./run_server.sh --mock     also start mock Immich server on 127.0.0.1:22841
 #   ./run_server.sh --reset    clear persisted auth/config before starting
+#   ./run_server.sh --dev      use `wails3 dev` with EXTRA_TAGS=server (hot-reload)
 set -e
 
 # Repo root: this script lives in <root>/scripts, so its parent is the root.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
-export HOME="$BASE/.home"
+
+# Toolchain env for the wails3 CLI + nested go/node subprocesses.
+# HOME=/root so mise/global tools resolve; the app's local dirs stay in-repo.
+export HOME=/root
 export GOPATH="$BASE/.go"
 export GOCACHE="$BASE/.gocache"
 export XDG_CACHE_HOME="$BASE/.cache"
 export XDG_CONFIG_HOME="$BASE/.home/.config"
 export XDG_DATA_HOME="$BASE/.home/.local/share"
+export PATH="$BASE/.tools:/root/.local/share/mise/installs/go/1.27.0/bin:/root/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin"
+export WAILS3="$BASE/.tools/wails3"
 
 MOCK=0
 RESET=0
+DEV=0
 for a in "$@"; do
   [ "$a" = "--mock" ] && MOCK=1
   [ "$a" = "--reset" ] && RESET=1
+  [ "$a" = "--dev" ] && DEV=1
 done
 
 if [ "$RESET" = "1" ]; then
@@ -42,15 +52,13 @@ if [ "$MOCK" = "1" ]; then
   sleep 1
 fi
 
-# Build server-mode binary if missing
-if ! [ -f "$BASE/bin/ImmichDesktopSync-server" ]; then
-  echo "[*] Building server-mode binary (run: go build -tags server,dev)"
-  go build -tags server,dev -buildvcs=false -gcflags=all="-l" -o "$BASE/bin/ImmichDesktopSync-server"
+if [ "$DEV" = "1" ]; then
+  echo "[*] wails3 dev with EXTRA_TAGS=server (vite hot-reload on :9245, app on :3823)"
+  export EXTRA_TAGS="server"
+  unset DISPLAY
+  "$WAILS3" dev
+else
+  echo "[*] wails3 task common:run:server DEV=true"
+  unset DISPLAY
+  "$WAILS3" task common:run:server DEV=true
 fi
-
-echo "[*] Running wails3 server-mode binary on 127.0.0.1:3823"
-unset DISPLAY
-svc() {
-  "$BASE/bin/ImmichDesktopSync-server"
-}
-svc

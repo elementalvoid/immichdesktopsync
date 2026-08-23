@@ -57,25 +57,35 @@ BUILD:    $BASE/.gocache
 Wails3 CLI: $BASE/.tools/wails3   (stable copy of `go install .../wails3@latest`)
 ```
 
-## Build + run (server mode)
+## Build + run (server mode) — idiomatic wails3
+
+Use the **wails3 CLI + project Taskfile** rather than hand-rolled `go build`.
+The `wails3-plus` Taskfile ships ready-made server tasks.
+
+**Stable / scripting path** — embedded frontend, no live vite needed:
 
 ```bash
-# From the repository root:
-cd "$(git rev-parse --show-toplevel)"   # or: cd path/to/immichdesktopsync
-
-# 1) compile the server-mode binary (do once):
-go build -tags server,dev -buildvcs=false -gcflags=all="-l" -o bin/ImmichDesktopSync-server
-
-# 2) run it (no DISPLAY, no GTK):
-unset DISPLAY
-./bin/ImmichDesktopSync-server
-#    logs: "Server mode starting address=127.0.0.1:3823"
-
-# or use the helper which also optionally starts the mock Immich server:
-./scripts/run_server.sh --mock --reset
+# From the repository root (cd "$(git rev-parse --show-toplevel)"):
+wails3 task common:build:server DEV=true     # builds bin/ImmichDesktopSync-server
+wails3 task common:run:server DEV=true       # builds (if needed) + runs it
 ```
 
-The server listens on `127.0.0.1:3823` (override with `WAILS_SERVER_PORT`).
+**Hot-reload dev path** — pulls up the Vite dev server on :9245 and the app
+HTTP server on :3823 (`EXTRA_TAGS=server` flows into the dev build's `-tags`):
+
+```bash
+EXTRA_TAGS=server wails3 dev
+```
+
+The app listens on `127.0.0.1:3823` (`WAILS_SERVER_PORT` overrides). For a
+wrapper that handles env + optional mock server + reset, use
+`./scripts/run_server.sh [--mock] [--reset] [--dev]`.
+
+> **Toolchain env tip:** `wails3 dev`/`task` fork `go`/`node`/`npm`
+> subprocesses. Make sure `go` and the wails3 CLI are on PATH and resolve
+> (e.g. HOME=/root, and put the real go binary dir before any mise shims that
+> try to re-resolve `latest` over the network). The app's own toolchain dirs
+> (`$BASE/.go`, `$BASE/.cache`, etc.) stay in-repo via GOPATH/XDG vars.
 
 ---
 
