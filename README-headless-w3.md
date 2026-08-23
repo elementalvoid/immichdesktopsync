@@ -47,7 +47,8 @@ apt install -y build-essential gcc pkg-config libgtk-4-dev \
 (The older wails2 deps webkit2gtk-4.1/gtk-3 are also fine to have installed;
 wails3 detects either. GTK3/4 are both supported at runtime.)
 
-Tooling in the repo (kept local, no global write access):
+Tooling in the repo (kept local, no global write access). `$BASE` below is the
+repository root (where this README lives):
 
 ```
 GOMODULE: $BASE/.go   (GOPATH)
@@ -59,7 +60,8 @@ Wails3 CLI: $BASE/.tools/wails3   (stable copy of `go install .../wails3@latest`
 ## Build + run (server mode)
 
 ```bash
-cd /root/immich-desktop/immichdesktopsync-w3
+# From the repository root:
+cd "$(git rev-parse --show-toplevel)"   # or: cd path/to/immichdesktopsync
 
 # 1) compile the server-mode binary (do once):
 go build -tags server,dev -buildvcs=false -gcflags=all="-l" -o bin/ImmichDesktopSync-server
@@ -81,17 +83,24 @@ The server listens on `127.0.0.1:3823` (override with `WAILS_SERVER_PORT`).
 
 Each test carries a **PEP 723 inline dependency header**, so `uv run` creates a
 managed env and installs `playwright` automatically. Set a workspace-local uv
-cache (the global `/root/.cache/uv` is not writable in the sandbox) and point
-at the shared headless-browser binary:
+cache and point at the shared headless-browser binary:
 
 ```bash
+# From the repository root:
 uv run tests/test_server_smoke.py
 uv run tests/test_e2e_w3.py
 ```
 
-(Needed env once: `UV_CACHE_DIR=/root/immich-desktop/.uv-cache`,
-`XDG_CACHE_HOME=/root/immich-desktop/.cache`, and
-`PLAYWRIGHT_BROWSERS_PATH=/root/immich-desktop/.pw-browsers`.)
+The sandbox has no global write access outside the workspace, so these env vars
+point at writable sibling dirs. They are environment-specific: adjust the
+absolute paths to wherever your uv cache and playwright browsers live, keeping
+`$BASE` as the repo root for everything in-repo:
+
+```
+UV_CACHE_DIR=$BASE/../.uv-cache
+XDG_CACHE_HOME=$BASE/../.cache
+PLAYWRIGHT_BROWSERS_PATH=$BASE/../.pw-browsers
+```
 
 `test_e2e_w3.py` proves the complete chain: the headless browser submits the
 login form, `auth.login()` calls the generated binding
@@ -103,8 +112,8 @@ round-trip again. Then thumbnails render.
 ## Notes
 
 - Backend config / SQLite persist under `$BASE/.home/.config/immich-desktop/`.
-  Delete that dir (`--reset`) to get a clean login flow each time.
+  Delete that dir (`scripts/run_server.sh --reset`) to get a clean login flow.
 - The `wails3 dev` (desktop/webview) path still needs a real or virtual X
   display (GTK4), and crashes headless — so prefer **server mode** here.
-- Mock Immich server: `mock_immich.py` (login, version, search/metadata,
+- Mock Immich server: `tests/mock_immich.py` (login, version, search/metadata,
   albums, thumbnails, originals, upload).

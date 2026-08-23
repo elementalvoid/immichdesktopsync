@@ -13,7 +13,9 @@
 #   ./run_server.sh --reset    clear persisted auth/config before starting
 set -e
 
-BASE="$(cd "$(dirname "$0")" && pwd)"
+# Repo root: this script lives in <root>/scripts, so its parent is the root.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
 export HOME="$BASE/.home"
 export GOPATH="$BASE/.go"
 export GOCACHE="$BASE/.gocache"
@@ -35,8 +37,8 @@ fi
 
 if [ "$MOCK" = "1" ]; then
   echo "[*] Starting mock Immich server on 127.0.0.1:22841"
-  "$BASE/../.pv/venv/bin/python" "$BASE/mock_immich.py" 22841 >"$BASE/.mock.log" 2>&1 &
-  # Or: /root/immich-desktop/.pv/venv/bin/python (venv lives one level up from the repo)
+  "$BASE/../.pv/venv/bin/python" "$BASE/tests/mock_immich.py" 22841 >"$BASE/.mock.log" 2>&1 &
+  # Or point at an absolute venv python if `../.pv` is not where yours lives.
   sleep 1
 fi
 
