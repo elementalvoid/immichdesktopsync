@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -32,10 +33,24 @@ func setupLogging() {
 func main() {
 	setupLogging()
 
+	// Server mode: `go build -tags server` runs the app as a pure HTTP server
+	// (no GTK window, no tray) so the whole go<->js stack can be driven from a
+	// headless browser. Port defaults to 3823, override with WAILS_SERVER_PORT.
+	port := 3823
+	if p := os.Getenv("WAILS_SERVER_PORT"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			port = n
+		}
+	}
+
 	app := application.New(application.Options{
 		Name: "Immich Desktop Sync",
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
+		},
+		Server: application.ServerOptions{
+			Host: "127.0.0.1",
+			Port: port,
 		},
 	})
 

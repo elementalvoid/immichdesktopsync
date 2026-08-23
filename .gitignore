@@ -26,3 +26,14 @@ frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local toolchain / sandbox dirs (not part of the project)
+.cache/
+.go/
+.gocache/
+.home/
+.tools/
+.uv-cache/
+.pw-browsers/
+.mock.log
+.xvfb.log
