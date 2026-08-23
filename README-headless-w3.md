@@ -92,8 +92,8 @@ wrapper that handles env + optional mock server + reset, use
 ## Running the browser tests with uv (preferred)
 
 Each test carries a **PEP 723 inline dependency header**, so `uv run` creates a
-managed env and installs `playwright` automatically. Set a workspace-local uv
-cache and point at the shared headless-browser binary:
+managed env and installs `playwright` automatically — **no uv cache env var
+needed** (uv uses its default cache location under your home dir).
 
 ```bash
 # From the repository root:
@@ -101,16 +101,20 @@ uv run tests/test_server_smoke.py
 uv run tests/test_e2e_w3.py
 ```
 
-The sandbox has no global write access outside the workspace, so these env vars
-point at writable sibling dirs. They are environment-specific: adjust the
-absolute paths to wherever your uv cache and playwright browsers live, keeping
-`$BASE` as the repo root for everything in-repo:
+**One-time: download the headless browser.** `uv run` installs the playwright
+*package* but not the browser binary. Do it once with:
 
+```bash
+uv run --with playwright playwright install chromium
 ```
-UV_CACHE_DIR=$BASE/../.uv-cache
-XDG_CACHE_HOME=$BASE/../.cache
-PLAYWRIGHT_BROWSERS_PATH=$BASE/../.pw-browsers
-```
+
+Playwright stores it in its default location (`~/.cache/ms-playwright`), so no
+`PLAYWRIGHT_BROWSERS_PATH` override is needed either — both uv and playwright
+manage their own caches.
+
+> This is a change from requiring hand-maintained venv/cache dirs: you do not
+> need to create `.pv`, `.uv-cache`, `.pw-browsers`, or point any
+> `UV_CACHE_DIR`/`PLAYWRIGHT_BROWSERS_PATH` at them.
 
 `test_e2e_w3.py` proves the complete chain: the headless browser submits the
 login form, `auth.login()` calls the generated binding
@@ -126,4 +130,5 @@ round-trip again. Then thumbnails render.
 - The `wails3 dev` (desktop/webview) path still needs a real or virtual X
   display (GTK4), and crashes headless — so prefer **server mode** here.
 - Mock Immich server: `tests/mock_immich.py` (login, version, search/metadata,
-  albums, thumbnails, originals, upload).
+  albums, thumbnails, originals, upload). It is stdlib-only, so it runs under
+  bare `uv run` too (no third-party install).

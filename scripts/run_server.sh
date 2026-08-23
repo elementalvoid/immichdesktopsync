@@ -34,6 +34,7 @@ export WAILS3="$BASE/.tools/wails3"
 MOCK=0
 RESET=0
 DEV=0
+MOCK_PORT=22841
 for a in "$@"; do
   [ "$a" = "--mock" ] && MOCK=1
   [ "$a" = "--reset" ] && RESET=1
@@ -46,9 +47,9 @@ if [ "$RESET" = "1" ]; then
 fi
 
 if [ "$MOCK" = "1" ]; then
-  echo "[*] Starting mock Immich server on 127.0.0.1:22841"
-  "$BASE/../.pv/venv/bin/python" "$BASE/tests/mock_immich.py" 22841 >"$BASE/.mock.log" 2>&1 &
-  # Or point at an absolute venv python if `../.pv` is not where yours lives.
+  echo "[*] Starting mock Immich server on 127.0.0.1:$MOCK_PORT (uv run)"
+  # Use uv with the script's PEP 723 header (stdlib-only) — no venv to manage.
+  uv run tests/mock_immich.py "$MOCK_PORT" >"$BASE/.mock.log" 2>&1 &
   sleep 1
 fi
 

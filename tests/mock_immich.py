@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# /// script
+# dependencies = []
+# ///
 """Mock Immich server — implements the REST endpoints that immichdesktopsync's
 Go client calls, so the full go<->js flow can be tested headlessly.
 

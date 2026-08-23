@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# /// script
+# dependencies = [
+#   "playwright>=1.0",
+# ]
+# ///
 """Wails3 server-mode bridge smoke test.
 Loads the app served by the wails3 server-mode binary (pure HTTP, no GTK) and
 verifies the frontend-to-Go IPC bridge works through the HTTP transport.
