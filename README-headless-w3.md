@@ -103,18 +103,14 @@ uv run tests/test_server_smoke.py
 uv run tests/test_e2e_w3.py
 ```
 
-**One-time: download the headless browser.** `uv run` installs the playwright
-*package* but not the browser binary. Do it once with:
+**Browser setup is automatic.** Each test runs a preflight that downloads the
+headless Chromium and, if its shared libraries are missing (`libnspr4`,
+`libnss3`, …), installs the browser's system dependencies on first run
+(`playwright install` / `playwright install-deps`; the latter needs root or
+passwordless sudo). To do either step manually instead:
 
 ```bash
 uv run --with playwright playwright install chromium
-```
-
-**One-time: browser system dependencies.** The downloaded Chromium needs its
-own shared libraries (`libnspr4`, `libnss3`, …). If launch fails with an
-`error while loading shared libraries` message, install them once with:
-
-```bash
 uv run --with playwright playwright install-deps chromium
 ```
 
