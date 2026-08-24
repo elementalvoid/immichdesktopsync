@@ -21,15 +21,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Toolchain env for the wails3 CLI + nested go/node subprocesses.
-# HOME=/root so mise/global tools resolve; the app's local dirs stay in-repo.
-export HOME=/root
-export GOPATH="$BASE/.go"
-export GOCACHE="$BASE/.gocache"
-export XDG_CACHE_HOME="$BASE/.cache"
-export XDG_CONFIG_HOME="$BASE/.home/.config"
-export XDG_DATA_HOME="$BASE/.home/.local/share"
-export PATH="$BASE/.tools:/root/.local/share/mise/installs/go/1.27.0/bin:/root/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin"
-export WAILS3="$BASE/.tools/wails3"
+# Only what functionally matters: the project Taskfile invokes `wails3`
+# (generate:bindings), so $BASE/.tools must be on PATH. Everything else
+# (go/node/npm/uv) is expected to resolve from the ambient environment.
+# WAILS3 is script-local; nothing else consumes it.
+export PATH="$BASE/.tools:$PATH"
+WAILS3="$BASE/.tools/wails3"
 
 MOCK=0
 RESET=0
@@ -42,8 +39,10 @@ for a in "$@"; do
 done
 
 if [ "$RESET" = "1" ]; then
-  echo "[*] Clearing persisted auth config"
-  rm -rf "$XDG_CONFIG_HOME/immich-desktop"
+  echo "[*] Clearing persisted auth config ($HOME/.config/immich-desktop)"
+  # backend/config.go uses os.UserHomeDir(), so state lives under $HOME,
+  # not XDG_CONFIG_HOME.
+  rm -rf "$HOME/.config/immich-desktop"
 fi
 
 if [ "$MOCK" = "1" ]; then

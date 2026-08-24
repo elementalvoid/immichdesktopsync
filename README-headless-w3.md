@@ -47,15 +47,16 @@ apt install -y build-essential gcc pkg-config libgtk-4-dev \
 (The older wails2 deps webkit2gtk-4.1/gtk-3 are also fine to have installed;
 wails3 detects either. GTK3/4 are both supported at runtime.)
 
-Tooling in the repo (kept local, no global write access). `$BASE` below is the
-repository root (where this README lives):
+Tooling paths used here. `$BASE` below is the repository root (where this
+README lives):
 
 ```
-GOMODULE: $BASE/.go   (GOPATH)
-GOBIN:    $BASE/.home/.../bin
-BUILD:    $BASE/.gocache
-Wails3 CLI: $BASE/.tools/wails3   (stable copy of `go install .../wails3@latest`)
+Wails3 CLI: $BASE/.tools/wails3   (stable copy of `go install .../wails3@v3.0.0-beta.9`;
+            scripts/run_server.sh prepends this dir to PATH)
 ```
+
+Go and npm keep their default caches (`~/go`, `~/.cache/go-build`, `~/.npm`);
+set `GOPATH`/`GOCACHE`/`npm_config_cache` yourself if you prefer them in-repo.
 
 ## Build + run (server mode) — idiomatic wails3
 
@@ -82,10 +83,11 @@ wrapper that handles env + optional mock server + reset, use
 `./scripts/run_server.sh [--mock] [--reset] [--dev]`.
 
 > **Toolchain env tip:** `wails3 dev`/`task` fork `go`/`node`/`npm`
-> subprocesses. Make sure `go` and the wails3 CLI are on PATH and resolve
-> (e.g. HOME=/root, and put the real go binary dir before any mise shims that
-> try to re-resolve `latest` over the network). The app's own toolchain dirs
-> (`$BASE/.go`, `$BASE/.cache`, etc.) stay in-repo via GOPATH/XDG vars.
+> subprocesses, so those must resolve from your ambient PATH. The wrapper only
+> prepends `$BASE/.tools` — the project Taskfile needs it there because it
+> invokes `wails3 generate bindings` by name. Beware mise-style shims that try
+> to re-resolve `latest` over the network (put the real binary dir first if
+> that bites you).
 
 ---
 
@@ -108,6 +110,14 @@ uv run tests/test_e2e_w3.py
 uv run --with playwright playwright install chromium
 ```
 
+**One-time: browser system dependencies.** The downloaded Chromium needs its
+own shared libraries (`libnspr4`, `libnss3`, …). If launch fails with an
+`error while loading shared libraries` message, install them once with:
+
+```bash
+uv run --with playwright playwright install-deps chromium
+```
+
 Playwright stores it in its default location (`~/.cache/ms-playwright`), so no
 `PLAYWRIGHT_BROWSERS_PATH` override is needed either — both uv and playwright
 manage their own caches.
@@ -125,7 +135,8 @@ round-trip again. Then thumbnails render.
 
 ## Notes
 
-- Backend config / SQLite persist under `$BASE/.home/.config/immich-desktop/`.
+- Backend config / SQLite persist under `$HOME/.config/immich-desktop/`
+  (`backend/config.go` resolves it via `os.UserHomeDir()`).
   Delete that dir (`scripts/run_server.sh --reset`) to get a clean login flow.
 - The `wails3 dev` (desktop/webview) path still needs a real or virtual X
   display (GTK4), and crashes headless — so prefer **server mode** here.
