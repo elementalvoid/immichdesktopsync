@@ -23,14 +23,14 @@ var retryDelays = []time.Duration{
 }
 
 type UploadQueue struct {
-	database    *db.DB
-	client      *immich.Client
-	sem         chan struct{}
-	wg          sync.WaitGroup
-	stop        chan struct{}
-	notify      chan struct{}
-	onStart     func()
-	onDone      func()
+	database *db.DB
+	client   *immich.Client
+	sem      chan struct{}
+	wg       sync.WaitGroup
+	stop     chan struct{}
+	notify   chan struct{}
+	onStart  func()
+	onDone   func()
 }
 
 func NewUploadQueue(database *db.DB, client *immich.Client, onStart, onDone func()) *UploadQueue {
@@ -78,19 +78,19 @@ func (q *UploadQueue) loop() {
 }
 
 func (q *UploadQueue) processNext() {
-	items, err := q.database.DequeueNextPending(maxConcurrent)
+	// DequeueNextPending atomically claims what it returns (status ->
+	// 'uploading'), so concurrent processNext() calls can never pick up the same
+	// row and upload it twice. The cutoff defers rows that are still inside their
+	// retry backoff: a 'failed' row is claimable only once it is older than the
+	// delay for its retry count.
+	cutoff := time.Now().UTC().Add(-retryDelays[0])
+	items, err := q.database.DequeueNextPending(maxConcurrent, cutoff)
 	if err != nil {
 		log.Printf("queue: dequeue error: %v", err)
 		return
 	}
 	for _, item := range items {
 		item := item
-		if item.RetryCount > 0 && item.LastAttempt != "" {
-			last, err := time.Parse(time.RFC3339, item.LastAttempt)
-			if err == nil && time.Since(last) < retryDelay(item.RetryCount) {
-				continue
-			}
-		}
 
 		q.sem <- struct{}{}
 		q.wg.Add(1)
@@ -104,10 +104,9 @@ func (q *UploadQueue) processNext() {
 				}
 			}()
 
-			if err := q.database.MarkUploading(item.ID); err != nil {
-				log.Printf("queue: mark uploading %d: %v", item.ID, err)
-				return
-			}
+			// Already claimed as 'uploading' by the dequeue above; rows still in
+			// their retry backoff were filtered out there, so no re-check is
+			// needed here.
 			if q.onStart != nil {
 				q.onStart()
 			}
@@ -128,6 +127,8 @@ func (q *UploadQueue) processNext() {
 	}
 }
 
+// retryDelay is the backoff for a given retry count (1-based): the first retry
+// waits retryDelays[0], and later retries wait progressively longer.
 func retryDelay(retryCount int) time.Duration {
 	idx := retryCount - 1
 	if idx < 0 {
