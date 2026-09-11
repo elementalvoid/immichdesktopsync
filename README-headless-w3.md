@@ -100,8 +100,15 @@ needed** (uv uses its default cache location under your home dir).
 ```bash
 # From the repository root:
 uv run tests/test_server_smoke.py
-uv run tests/test_e2e_w3.py
+uv run tests/test_e2e_w3.py       # regression: login -> Gallery -> thumbnails
+uv run tests/test_e2e_upload.py   # uploads (see below)
 ```
+
+Both e2e tests need the app server running (`./scripts/run_server.sh --reset`;
+add `--mock` for `test_e2e_w3.py`, which expects a mock on the default
+`127.0.0.1:22841`). `test_e2e_upload.py` spawns its **own** mock on an
+ephemeral port instead, so it does not care what is (or is not) on 22841 —
+it re-points the app at that port via the login form.
 
 **Browser setup is automatic.** Each test runs a preflight that downloads the
 headless Chromium and, if its shared libraries are missing (`libnspr4`,
@@ -128,6 +135,50 @@ login form, `auth.login()` calls the generated binding
 dispatches to `App.Login`, the mock Immich `POST /api/auth/login` succeeds,
 and the app flips to the Gallery where `GetAssets` + `GetThumbnail`
 round-trip again. Then thumbnails render.
+
+### `test_e2e_upload.py` — the upload chain
+
+Proves the **complete upload path** headlessly, end to end:
+
+**UI → `AddFolder` → folder scan → SQLite queue → UploadQueue worker →
+multipart `POST /api/assets` → mock Immich → queue drains → asset in Gallery.**
+
+What it asserts:
+
+1. **Integrity, byte-for-byte** — `sha256(source file)` ==
+   `sha256(record)` == `sha256(bytes the mock wrote to disk)`, plus matching
+   sizes and the Go client's `deviceAssetId` (`<name>-<size>`) format. The
+   mock stores every upload verbatim in a fresh temp dir, so this is a real
+   content comparison, never a size-only check.
+2. **Queue drain** — the run's rows disappear from the queue. Note that
+   `MarkDone` **deletes** the row (`backend/db/sqlite.go`), so a completed
+   upload is observable only as *absence*; there is no `done` row to wait for.
+3. **Gallery growth** — the uploaded assets show up after the `upload:done`
+   event.
+4. **Failure + retry** — `/_test/fail_next` injects an HTTP 500, the item goes
+   `failed`, and **Retry All** recovers it (with integrity re-verified).
+5. **Idempotency** — re-adding the same folder produces no duplicate uploads.
+
+Each run uses unique-per-run filenames and unwatches its temp folders on
+teardown, so runs are independent and repeatable without wiping state.
+
+> **Gotcha:** the Upload Queue panel is a sidebar **toggle**, closed by default
+> (`showUploadPanel` in `App.svelte`), and `UploadStatus.svelte`'s list
+> rows only exist in the DOM while it is open. Tests must open it before
+> querying `ul.divide-y li`.
+
+### Mock test-control endpoints (`/_test/*`)
+
+`tests/mock_immich.py` exposes auth-exempt control endpoints used by
+`test_e2e_upload.py`:
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/_test/uploads` | GET | JSON list of captured upload records, each with `assetId`, `deviceAssetId`, `originalFileName`, `fileSize`, `sha256`, `storedPath` (integrity assertions) |
+| `/_test/reset` | POST | Clear uploads and restore the seeded assets/albums |
+| `/_test/fail_next` | POST | Body `{"count": n}`: the next `n` uploads return HTTP 500 (retry testing) |
+
+---
 
 ## Notes
 
