@@ -13,6 +13,10 @@ import (
 
 type DB struct {
 	conn *sql.DB
+
+	// Thumbnail cache policy. Open sets the defaults; tests override them.
+	cacheMaxBytes int64
+	cacheTTL      time.Duration
 }
 
 func Open(path string) (*DB, error) {
@@ -30,7 +34,11 @@ func Open(path string) (*DB, error) {
 	if _, err := conn.Exec("PRAGMA busy_timeout = 5000"); err != nil {
 		return nil, fmt.Errorf("sqlite busy_timeout: %w", err)
 	}
-	d := &DB{conn: conn}
+	d := &DB{
+		conn:          conn,
+		cacheMaxBytes: 512 << 20, // 512 MiB
+		cacheTTL:      30 * 24 * time.Hour,
+	}
 	if err := d.migrate(); err != nil {
 		return nil, err
 	}
@@ -267,10 +275,43 @@ func (d *DB) GetFolders() ([]string, error) {
 }
 
 func (d *DB) CacheThumbnail(key string, data []byte) error {
-	_, err := d.conn.Exec(
+	now := time.Now().UTC()
+	if _, err := d.conn.Exec(
 		`INSERT OR REPLACE INTO thumbnail_cache (asset_id, data, cached_at) VALUES (?,?,?)`,
-		key, data, time.Now().UTC().Format(time.RFC3339),
-	)
+		key, data, now.Format(time.RFC3339Nano),
+	); err != nil {
+		return err
+	}
+	return d.evictThumbnails(now)
+}
+
+// evictThumbnails drops expired rows, then the oldest rows that push the cache
+// over its byte budget. It runs as separate auto-commit statements rather than
+// one transaction: a cached thumbnail may be briefly over budget, and an open
+// transaction would pin the pool's single connection (see DequeueNextPending).
+func (d *DB) evictThumbnails(now time.Time) error {
+	if _, err := d.conn.Exec(
+		`DELETE FROM thumbnail_cache WHERE cached_at < ?`,
+		now.Add(-d.cacheTTL).Format(time.RFC3339Nano),
+	); err != nil {
+		return err
+	}
+	if d.cacheMaxBytes <= 0 {
+		return nil
+	}
+	// Keep the newest rows while their running total fits the budget. rowid
+	// breaks cached_at ties (RFC3339 has one-second resolution) and grows with
+	// each INSERT OR REPLACE.
+	_, err := d.conn.Exec(`
+		DELETE FROM thumbnail_cache
+		WHERE rowid IN (
+			SELECT rowid FROM (
+				SELECT rowid,
+				       SUM(LENGTH(data)) OVER (ORDER BY cached_at DESC, rowid DESC) AS running
+				FROM thumbnail_cache
+			)
+			WHERE running > ?
+		)`, d.cacheMaxBytes)
 	return err
 }
 
