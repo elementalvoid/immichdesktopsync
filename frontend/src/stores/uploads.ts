@@ -24,22 +24,40 @@ function createUploadsStore() {
     loading: false,
   });
 
-  // Named so the event handler is the same function on bind and unbind.
-  async function refresh() {
+  let queueRefreshing = false;
+  let queueAgain = false;
+
+  // A folder copy emits one upload:changed event per file, so coalesce: keep
+  // one queue fetch in flight and run one more if events arrived meanwhile.
+  async function refreshQueue() {
+    if (queueRefreshing) {
+      queueAgain = true;
+      return;
+    }
+    queueRefreshing = true;
     try {
-      const [queue, folders] = await Promise.all([
-        GetUploadQueue(),
-        GetFolders(),
-      ]);
-      update(s => ({
-        ...s,
-        queue: (queue as UploadQueueItem[]) ?? [],
-        folders: (folders as string[]) ?? [],
-      }));
+      do {
+        queueAgain = false;
+        const queue = await GetUploadQueue();
+        update(s => ({ ...s, queue: (queue as UploadQueueItem[]) ?? [] }));
+      } while (queueAgain);
+    } catch (e) {
+      console.error('uploads refresh:', e);
+    } finally {
+      queueRefreshing = false;
+    }
+  }
+
+  async function refreshFolders() {
+    try {
+      const folders = await GetFolders();
+      update(s => ({ ...s, folders: (folders as string[]) ?? [] }));
     } catch (e) {
       console.error('uploads refresh:', e);
     }
   }
+
+  const refresh = () => Promise.all([refreshQueue(), refreshFolders()]);
 
   let bound = false;
 
@@ -48,11 +66,12 @@ function createUploadsStore() {
     refresh,
 
     // The backend emits upload:changed on every enqueue, start, done, and
-    // fail, so the store does not poll.
+    // fail, so the store does not poll. Only the queue can change on those
+    // events; folders change through addFolder/removeFolder.
     bindEvents() {
       if (bound) return;
       bound = true;
-      Events.On('upload:changed', refresh);
+      Events.On('upload:changed', refreshQueue);
       refresh();
     },
 
@@ -66,17 +85,17 @@ function createUploadsStore() {
       const path = await SelectFolder();
       if (!path) return;
       await AddFolder(path);
-      await this.refresh();
+      await refreshFolders();
     },
 
     async addFolderByPath(path: string) {
       await AddFolder(path);
-      await this.refresh();
+      await refreshFolders();
     },
 
     async removeFolder(path: string) {
       await RemoveFolder(path);
-      await this.refresh();
+      await refreshFolders();
     },
   };
 }

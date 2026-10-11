@@ -130,3 +130,32 @@ func TestDownloadAssetKeepsExistingFile(t *testing.T) {
 		t.Errorf("renamed download = %q, want %q", got, payload)
 	}
 }
+
+// TestCancelFetchStopsInFlightRequest proves the App-owned fetch context is the
+// one a logout cancels (Logout calls cancelFetch). A blocked request must
+// return an error as soon as cancelFetch runs.
+func TestCancelFetchStopsInFlightRequest(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+	}))
+	defer func() {
+		close(release)
+		srv.Close()
+	}()
+
+	app := &App{client: immich.NewClient(srv.URL, "token")}
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := app.client.SearchMetadataPage(app.fetchContext(), 1, 10, models.SearchRequest{})
+		errCh <- err
+	}()
+
+	<-started
+	app.cancelFetch()
+	if err := <-errCh; err == nil {
+		t.Fatal("in-flight request survived cancelFetch")
+	}
+}

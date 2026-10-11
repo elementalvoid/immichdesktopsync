@@ -5,6 +5,7 @@ import {
   buildTimeline,
   parseDate,
   appendAssets,
+  mergeGroups,
 } from '../src/lib/gallery.ts';
 
 let failed = 0;
@@ -61,6 +62,21 @@ assert(merged.map((a) => a.id).join(',') === 'p1,p2,p3', 'append keeps order and
 assert(page1.map((a) => a.id).join(',') === 'p1,p2', 'append does not mutate the first page');
 assert(appendAssets(page1, []) === page1, 'append of an empty page returns the same array');
 assert(appendAssets(page1, [{ id: 'p1' }]) === page1, 'append of only-seen ids returns the same array');
+
+// mergeGroups: extend existing groups without re-grouping the whole library
+const baseGroups = groupByDate([{ id: 'm1', localDateTime: '2024-08-08T10:00:00Z' }]);
+const grown = mergeGroups(baseGroups, [
+  { id: 'm2', localDateTime: '2024-08-08T09:00:00Z' }, // same day
+  { id: 'm3', localDateTime: '2024-08-07T10:00:00Z' }, // older day
+  { id: 'm4' },                                       // no date
+]);
+assert(grown.length === 3, 'merge adds one day group and the no-date group: ' + grown.length);
+assert(grown[0].assets.map((a) => a.id).join(',') === 'm1,m2', 'same day merged in append order: ' + grown[0].assets.map((a) => a.id));
+assert(grown[0].start === 0 && grown[1].start === 2, 'merge recomputes start offsets');
+assert(grown[1].assets[0].id === 'm3', 'older day follows the newer day');
+assert(grown[2].label === 'No Date', 'no-date group is last after merge');
+assert(baseGroups[0].assets.length === 1, 'merge does not mutate the input groups');
+assert(mergeGroups(baseGroups, []) === baseGroups, 'merge of an empty page returns the same array');
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILURE(S)`);
 process.exit(failed === 0 ? 0 : 1);

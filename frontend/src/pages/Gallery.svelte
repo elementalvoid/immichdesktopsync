@@ -5,11 +5,12 @@
   import PhotoGrid from '../components/PhotoGrid.svelte';
   import Lightbox from '../components/Lightbox.svelte';
   import TimelineRail from '../components/TimelineRail.svelte';
-  import { groupByDate, buildTimeline, appendAssets, type Group } from '../lib/gallery';
+  import { groupByDate, mergeGroups, buildTimeline, appendAssets, type Group } from '../lib/gallery';
   import { getThumbUrl } from '../lib/thumbCache';
 
-  // Timeline grouping (photos view only)
-  $: groups = view === 'photos' ? groupByDate(allAssets) : ([] as Group<Asset>[]);
+  // Timeline grouping. Groups are built once and extended per page, so the
+  // whole library is not re-sorted on every append.
+  let groups: Group<Asset>[] = [];
   $: displayAssets = groups.flatMap((g) => g.assets);
   $: timeline = buildTimeline(groups);
   let activeDateKey: string | null = null;
@@ -155,6 +156,7 @@
     try {
       const [first, al] = await Promise.all([GetAssetsPage(1, PAGE_SIZE), GetAlbums()]);
       allAssets = (first?.items as Asset[]) ?? [];
+      groups = groupByDate(allAssets);
       hasNext = first?.hasNext ?? false;
       nextPage = 2;
       albums = (al as Album[]) ?? [];
@@ -171,7 +173,11 @@
     loadingMore = true;
     try {
       const next = await GetAssetsPage(nextPage, PAGE_SIZE);
-      allAssets = appendAssets(allAssets, (next?.items as Asset[]) ?? []);
+      const before = allAssets;
+      allAssets = appendAssets(before, (next?.items as Asset[]) ?? []);
+      if (allAssets !== before) {
+        groups = mergeGroups(groups, allAssets.slice(before.length));
+      }
       hasNext = next?.hasNext ?? false;
       nextPage++;
       measured = false; // the grid grew, so re-measure timeline offsets

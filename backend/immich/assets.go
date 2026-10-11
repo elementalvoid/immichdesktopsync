@@ -108,7 +108,7 @@ func (c *Client) SearchMetadataPage(ctx context.Context, page, size int, req mod
 	}
 
 	body, _ := json.Marshal(payload)
-	resp, err := c.doCtx(ctx, "POST", "/api/search/metadata", bytes.NewReader(body), "application/json")
+	resp, err := c.doWith(ctx, c.httpClient, "POST", "/api/search/metadata", bytes.NewReader(body), "application/json", -1)
 	if err != nil {
 		return nil, false, err
 	}

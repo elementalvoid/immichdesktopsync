@@ -95,6 +95,42 @@ export function appendAssets<T extends RawAsset>(current: T[], incoming: T[]): T
   return fresh.length === 0 ? current : [...current, ...fresh];
 }
 
+// Order date groups newest first, matching groupByDate. No-date groups sink
+// to the end.
+function compareGroupDates(a: Group, b: Group): number {
+  if (a.date && b.date) return b.date.getTime() - a.date.getTime();
+  if (a.date) return -1;
+  if (b.date) return 1;
+  return 0;
+}
+
+// Merge one page of assets into already-grouped assets. Only the new page is
+// sorted; the existing groups are reused (as shallow copies) so the whole
+// library is not re-sorted on every page. Pages arrive newest first, so assets
+// within a day keep append order.
+export function mergeGroups<T extends RawAsset>(groups: Group<T>[], incoming: T[]): Group<T>[] {
+  if (incoming.length === 0) return groups;
+  const byKey = new Map<string, Group<T>>();
+  for (const g of groups) {
+    byKey.set(g.key, { ...g }); // copy, so a later start recompute is not shared
+  }
+  for (const g of groupByDate(incoming)) {
+    const existing = byKey.get(g.key);
+    if (existing) {
+      existing.assets = [...existing.assets, ...g.assets];
+    } else {
+      byKey.set(g.key, g);
+    }
+  }
+  const merged = [...byKey.values()].sort(compareGroupDates);
+  let start = 0;
+  for (const g of merged) {
+    g.start = start;
+    start += g.assets.length;
+  }
+  return merged;
+}
+
 export function buildTimeline(groups: Group[]): TimelineYear[] {
   const byYear = new Map<number, Set<number>>();
   for (const g of groups) {
