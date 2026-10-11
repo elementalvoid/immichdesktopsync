@@ -6,7 +6,7 @@
   $: queue = $uploads.queue;
   $: pending = queue.filter(i => i.status === 'pending').length;
   $: uploading = queue.filter(i => i.status === 'uploading').length;
-  $: failed = queue.filter(i => i.status === 'failed').length;
+  $: failed = queue.filter(i => i.status === 'failed' || i.status === 'exhausted').length;
   $: total = queue.length;
 
   let retrying = false;
@@ -26,6 +26,7 @@
       case 'uploading': return 'text-blue-400';
       case 'done':      return 'text-green-400';
       case 'failed':    return 'text-red-400';
+      case 'exhausted': return 'text-red-400/60';
       default:          return 'text-[#a6adc8]';
     }
   }
@@ -70,7 +71,7 @@
         {#each queue as item (item.id)}
           <li class="px-4 py-2">
             <div class="flex items-center gap-3">
-              <span class="w-2 h-2 rounded-full flex-shrink-0 {item.status === 'uploading' ? 'bg-blue-400 animate-pulse' : item.status === 'failed' ? 'bg-red-400' : 'bg-[#585b70]'}" />
+              <span class="w-2 h-2 rounded-full flex-shrink-0 {item.status === 'uploading' ? 'bg-blue-400 animate-pulse' : item.status === 'failed' ? 'bg-red-400' : item.status === 'exhausted' ? 'bg-red-400/50' : 'bg-[#585b70]'}" />
               <span class="flex-1 truncate text-sm text-[#cdd6f4]" title={item.filePath}>
                 {basename(item.filePath)}
               </span>
@@ -78,7 +79,7 @@
                 {item.status}{#if item.retryCount > 0}<span class="text-[#585b70]"> ×{item.retryCount}</span>{/if}
               </span>
             </div>
-            {#if item.status === 'failed' && item.error}
+            {#if (item.status === 'failed' || item.status === 'exhausted') && item.error}
               <p class="mt-1 ml-5 truncate text-xs text-red-400/80" title={item.error}>{item.error}</p>
             {/if}
           </li>

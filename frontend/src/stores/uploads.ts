@@ -4,7 +4,7 @@ import { GetUploadQueue, GetFolders, AddFolder, RemoveFolder, SelectFolder } fro
 export interface UploadQueueItem {
   id: number;
   filePath: string;
-  status: 'pending' | 'uploading' | 'done' | 'failed';
+  status: 'pending' | 'uploading' | 'done' | 'failed' | 'exhausted';
   retryCount: number;
   lastAttempt: string;
   error: string;

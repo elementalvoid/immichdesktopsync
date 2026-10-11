@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"immich-desktop-sync/backend/models"
@@ -94,35 +95,57 @@ func (d *DB) EnqueueFile(path string) error {
 // Rows are returned with Status already set to "uploading", matching the state
 // they are in on disk.
 //
-// A 'failed' row is only claimable once its retry backoff has elapsed, i.e.
-// when its last_attempt is at or before cutoff. Evaluating that here (rather
-// than after the claim) matters because the claim overwrites last_attempt: a
-// post-claim check would compare against the time it had just written and
-// conclude the row was still backing off forever. The caller owns the retry
-// policy and passes the cutoff.
-func (d *DB) DequeueNextPending(n int, cutoff time.Time) ([]models.UploadQueueItem, error) {
+// A 'failed' row is only claimable once its own retry backoff has elapsed. The
+// wait for a row depends on its retry_count: retryDelays[retry_count-1] for the
+// first entries, and the last entry for higher counts. Evaluating this in the
+// claim (rather than after it) matters because the claim overwrites
+// last_attempt: a post-claim check would compare against the time it had just
+// written and conclude the row was still backing off forever. A row at
+// maxRetries failures is 'exhausted' and is never claimed again.
+//
+// now is a parameter, not a call to time.Now(), so tests can move time.
+func (d *DB) DequeueNextPending(n int, now time.Time, retryDelays []time.Duration, maxRetries int) ([]models.UploadQueueItem, error) {
 	// Single auto-commit statement: the UPDATE claims the rows and RETURNING
 	// hands them back, so there is no window between selecting and claiming.
 	// Deliberately NOT wrapped in an explicit transaction: with MaxOpenConns(1)
 	// an open tx pins the pool's only connection, which starves the concurrent
 	// MarkFailed/MarkDone writes the worker goroutines make. The row set is also
 	// fully drained before this function returns.
-	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+
+	// Map a row's retry count to the cutoff for its next attempt. WHEN 0 covers
+	// a failed row with no retries. ELSE clamps counts past the table to the
+	// longest delay.
+	var backoff strings.Builder
+	backoff.WriteString("CASE retry_count WHEN 0 THEN ?")
+	args := []any{nowStr, maxRetries, nowStr}
+	for i, delay := range retryDelays {
+		fmt.Fprintf(&backoff, " WHEN %d THEN ?", i+1)
+		args = append(args, now.Add(-delay).Format(time.RFC3339))
+	}
+	backoff.WriteString(" ELSE ? END")
+	if len(retryDelays) > 0 {
+		args = append(args, now.Add(-retryDelays[len(retryDelays)-1]).Format(time.RFC3339))
+	} else {
+		args = append(args, nowStr)
+	}
+	args = append(args, n)
+
 	rows, err := d.conn.Query(`
 		UPDATE upload_queue
 		SET status='uploading', last_attempt=?
 		WHERE id IN (
 			SELECT id FROM upload_queue
-			WHERE status = 'pending'
-			   OR (
-			        status = 'failed'
-			        AND (last_attempt IS NULL OR last_attempt <= ?)
+			WHERE retry_count < ?
+			   AND (
+			        status = 'pending'
+			        OR (status = 'failed' AND (last_attempt IS NULL OR last_attempt <= `+backoff.String()+`))
 			   )
 			ORDER BY id ASC
 			LIMIT ?
 		)
 		RETURNING id, file_path, status, retry_count, last_attempt, error`,
-		now.Format(time.RFC3339), cutoff.Format(time.RFC3339), n)
+		args...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,16 +196,24 @@ func (d *DB) MarkDone(id int64, filePath, assetID string) error {
 	return tx.Commit()
 }
 
-func (d *DB) MarkFailed(id int64, errMsg string) error {
+// MarkFailed marks a claimed row as failed and increments its retry count. A
+// row that reaches maxRetries failures becomes 'exhausted', and
+// DequeueNextPending never claims it again. Call ResetFailedUploads to make it
+// claimable again after a manual retry.
+func (d *DB) MarkFailed(id int64, errMsg string, maxRetries int) error {
 	_, err := d.conn.Exec(
-		`UPDATE upload_queue SET status='failed', retry_count=retry_count+1, error=? WHERE id=?`,
-		errMsg, id,
+		`UPDATE upload_queue
+		SET status = CASE WHEN retry_count + 1 >= ? THEN 'exhausted' ELSE 'failed' END,
+		    retry_count = retry_count + 1,
+		    error = ?
+		WHERE id = ?`,
+		maxRetries, errMsg, id,
 	)
 	return err
 }
 
 func (d *DB) ResetFailedUploads() error {
-	_, err := d.conn.Exec(`UPDATE upload_queue SET status='pending', retry_count=0, error=NULL WHERE status='failed'`)
+	_, err := d.conn.Exec(`UPDATE upload_queue SET status='pending', retry_count=0, error=NULL WHERE status IN ('failed','exhausted')`)
 	return err
 }
 

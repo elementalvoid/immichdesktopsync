@@ -80,11 +80,10 @@ func (q *UploadQueue) loop() {
 func (q *UploadQueue) processNext() {
 	// DequeueNextPending atomically claims what it returns (status ->
 	// 'uploading'), so concurrent processNext() calls can never pick up the same
-	// row and upload it twice. The cutoff defers rows that are still inside their
-	// retry backoff: a 'failed' row is claimable only once it is older than the
-	// delay for its retry count.
-	cutoff := time.Now().UTC().Add(-retryDelays[0])
-	items, err := q.database.DequeueNextPending(maxConcurrent, cutoff)
+	// row and upload it twice. It also defers rows that are still inside their
+	// retry backoff: a 'failed' row is claimable only once the delay for its
+	// retry count has elapsed. retryDelays and maxRetries are the policy.
+	items, err := q.database.DequeueNextPending(maxConcurrent, time.Now().UTC(), retryDelays, maxRetries)
 	if err != nil {
 		log.Printf("queue: dequeue error: %v", err)
 		return
@@ -114,7 +113,7 @@ func (q *UploadQueue) processNext() {
 			assetID, err := q.client.UploadFile(item.FilePath)
 			if err != nil {
 				log.Printf("queue: upload %s failed: %v", item.FilePath, err)
-				_ = q.database.MarkFailed(item.ID, err.Error())
+				_ = q.database.MarkFailed(item.ID, err.Error(), maxRetries)
 				return
 			}
 
@@ -125,17 +124,4 @@ func (q *UploadQueue) processNext() {
 			}
 		}()
 	}
-}
-
-// retryDelay is the backoff for a given retry count (1-based): the first retry
-// waits retryDelays[0], and later retries wait progressively longer.
-func retryDelay(retryCount int) time.Duration {
-	idx := retryCount - 1
-	if idx < 0 {
-		return 0
-	}
-	if idx >= len(retryDelays) {
-		return retryDelays[len(retryDelays)-1]
-	}
-	return retryDelays[idx]
 }
