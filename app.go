@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -312,11 +313,6 @@ func (a *App) DownloadAsset(assetID, filename string) error {
 		return fmt.Errorf("create downloads folder: %w", err)
 	}
 
-	data, err := a.client.GetOriginal(assetID)
-	if err != nil {
-		return fmt.Errorf("fetch asset: %w", err)
-	}
-
 	dest := filepath.Join(a.cfg.DownloadsFolder, filename)
 	if _, err := os.Stat(dest); err == nil {
 		ext := filepath.Ext(filename)
@@ -329,9 +325,26 @@ func (a *App) DownloadAsset(assetID, filename string) error {
 		}
 	}
 
-	if err := os.WriteFile(dest, data, 0644); err != nil {
+	body, err := a.client.GetOriginal(assetID)
+	if err != nil {
+		return fmt.Errorf("fetch asset: %w", err)
+	}
+	defer body.Close()
+
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	if _, err := io.Copy(f, body); err != nil {
+		f.Close()
+		os.Remove(dest) // do not keep a truncated file that looks complete
 		return fmt.Errorf("write file: %w", err)
 	}
+	if err := f.Close(); err != nil {
+		os.Remove(dest)
+		return fmt.Errorf("close file: %w", err)
+	}
+
 	log.Printf("downloaded %s → %s", assetID, dest)
 	return nil
 }

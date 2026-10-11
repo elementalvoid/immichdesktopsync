@@ -130,6 +130,9 @@ func (c *Client) SearchMetadata(req models.SearchRequest) ([]models.Asset, error
 	return all, nil
 }
 
+// UploadFile streams the file to /api/assets. The multipart body is written
+// through an io.Pipe, so the file is never held in memory. Field order (file
+// part first) matches the Immich client.
 func (c *Client) UploadFile(filePath string) (string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -142,27 +145,45 @@ func (c *Client) UploadFile(filePath string) (string, error) {
 		return "", err
 	}
 
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
+	name := filepath.Base(filePath)
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	contentType := mw.FormDataContentType()
 
-	fw, err := mw.CreateFormFile("assetData", filepath.Base(filePath))
-	if err != nil {
-		return "", err
+	writeBody := func() error {
+		fw, err := mw.CreateFormFile("assetData", name)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(fw, f); err != nil {
+			return err
+		}
+		fields := []struct{ name, value string }{
+			{"deviceAssetId", fmt.Sprintf("%s-%d", name, info.Size())},
+			{"deviceId", "immich-desktop-sync"},
+			{"fileCreatedAt", info.ModTime().UTC().Format(time.RFC3339)},
+			{"fileModifiedAt", info.ModTime().UTC().Format(time.RFC3339)},
+			{"isFavorite", "false"},
+		}
+		for _, field := range fields {
+			if err := writeField(mw, field.name, field.value); err != nil {
+				return err
+			}
+		}
+		return mw.Close()
 	}
-	if _, err := io.Copy(fw, f); err != nil {
-		return "", err
-	}
 
-	_ = writeField(mw, "deviceAssetId", fmt.Sprintf("%s-%d", filepath.Base(filePath), info.Size()))
-	_ = writeField(mw, "deviceId", "immich-desktop-sync")
-	_ = writeField(mw, "fileCreatedAt", info.ModTime().UTC().Format(time.RFC3339))
-	_ = writeField(mw, "fileModifiedAt", info.ModTime().UTC().Format(time.RFC3339))
-	_ = writeField(mw, "isFavorite", "false")
+	go func() {
+		if err := writeBody(); err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_ = pw.Close()
+	}()
 
-	mw.Close()
-
-	resp, err := c.do("POST", "/api/assets", &buf, mw.FormDataContentType())
+	resp, err := c.do("POST", "/api/assets", pr, contentType)
 	if err != nil {
+		_ = pr.CloseWithError(err) // unblock the writer goroutine
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -201,13 +222,14 @@ func (c *Client) FetchThumbnail(assetID, size string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func (c *Client) GetOriginal(assetID string) ([]byte, error) {
+// GetOriginal returns the original asset body. The caller owns the reader and
+// must close it. The body is streamed, so the whole asset is never in memory.
+func (c *Client) GetOriginal(assetID string) (io.ReadCloser, error) {
 	resp, err := c.do("GET", fmt.Sprintf("/api/assets/%s/original", assetID), nil, "")
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return resp.Body, nil
 }
 
 func writeField(mw *multipart.Writer, field, value string) error {
