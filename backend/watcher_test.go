@@ -130,6 +130,33 @@ func TestRemoveFolderUnwatchesAutoAddedSubdir(t *testing.T) {
 	assertNotQueued(t, d, "after.mp4", 700*time.Millisecond)
 }
 
+// TestRemoveFolderKeepsOtherRoot guards against removing a parent folder also
+// unwatching a child folder that was added separately.
+func TestRemoveFolderKeepsOtherRoot(t *testing.T) {
+	fw, d := newTestWatcher(t)
+	parent := t.TempDir()
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.AddFolder(parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.AddFolder(child); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fw.RemoveFolder(parent); err != nil {
+		t.Fatal(err)
+	}
+
+	// The child root is still added, so a write in it must still enqueue.
+	if err := os.WriteFile(filepath.Join(child, "after.jpg"), []byte("y"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	waitQueued(t, d, "after.jpg")
+}
+
 // TestRemoveFolderStillEnqueuesNestedDirsBeforeRemove pins the positive case
 // the two leak tests rely on: a nested directory is watched before removal.
 func TestNestedDirIsWatched(t *testing.T) {

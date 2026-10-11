@@ -111,6 +111,17 @@ func (fw *FolderWatcher) RemoveFolder(root string) error {
 	fw.mu.Lock()
 	dirs := fw.watched[root]
 	delete(fw.watched, root)
+	// A directory also recorded under another root (a nested folder added
+	// separately) must keep its watch: remove only what this root alone owns.
+	keep := make(map[string]bool)
+	for other, set := range fw.watched {
+		if other == root {
+			continue
+		}
+		for dir := range set {
+			keep[dir] = true
+		}
+	}
 	fw.mu.Unlock()
 
 	if dirs == nil {
@@ -119,6 +130,9 @@ func (fw *FolderWatcher) RemoveFolder(root string) error {
 	}
 	var firstErr error
 	for dir := range dirs {
+		if keep[dir] {
+			continue
+		}
 		if err := fw.watcher.Remove(dir); err != nil && firstErr == nil {
 			firstErr = err
 		}
