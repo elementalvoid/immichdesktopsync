@@ -32,17 +32,23 @@ func (c *Client) SetToken(token string) { c.token = token }
 func (c *Client) Token() string         { return c.token }
 
 func (c *Client) do(method, path string, body io.Reader, contentType string) (*http.Response, error) {
-	return c.doWith(c.httpClient, method, path, body, contentType)
+	return c.doWith(c.httpClient, method, path, body, contentType, -1)
 }
 
 func (c *Client) doThumb(method, path string) (*http.Response, error) {
-	return c.doWith(c.thumbClient, method, path, nil, "")
+	return c.doWith(c.thumbClient, method, path, nil, "", -1)
 }
 
-func (c *Client) doWith(hc *http.Client, method, path string, body io.Reader, contentType string) (*http.Response, error) {
+// doWith sends the request. contentLength < 0 leaves the length unknown, so a
+// non-nil body is sent chunked. A value >= 0 sets Content-Length, which is
+// safer behind proxies than chunked.
+func (c *Client) doWith(hc *http.Client, method, path string, body io.Reader, contentType string, contentLength int64) (*http.Response, error) {
 	req, err := http.NewRequest(method, c.BaseURL+path, body)
 	if err != nil {
 		return nil, err
+	}
+	if contentLength >= 0 {
+		req.ContentLength = contentLength
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if contentType != "" {

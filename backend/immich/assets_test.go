@@ -1,9 +1,12 @@
 package immich
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -67,12 +70,28 @@ func TestUploadFileSendsFileAndFields(t *testing.T) {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		mr, err := r.MultipartReader()
+		// The body must carry a Content-Length, not chunked encoding, and the
+		// declared length must match the bytes actually sent.
+		if len(r.TransferEncoding) != 0 {
+			t.Errorf("Transfer-Encoding = %v, want none (Content-Length request)", r.TransferEncoding)
+		}
+		if r.ContentLength <= 0 {
+			t.Errorf("Content-Length = %d, want > 0", r.ContentLength)
+		}
+		raw, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Errorf("multipart reader: %v", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			t.Errorf("read body: %v", err)
 			return
 		}
+		if int64(len(raw)) != r.ContentLength {
+			t.Errorf("body = %d bytes, Content-Length = %d", len(raw), r.ContentLength)
+		}
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Errorf("parse content type: %v", err)
+			return
+		}
+		mr := multipart.NewReader(bytes.NewReader(raw), params["boundary"])
 		u := upload{fields: map[string]string{}}
 		h := sha256.New()
 		for {

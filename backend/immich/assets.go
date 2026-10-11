@@ -146,42 +146,34 @@ func (c *Client) UploadFile(filePath string) (string, error) {
 	}
 
 	name := filepath.Base(filePath)
+
+	// Size the body first. The file size is known, so the request can carry a
+	// Content-Length instead of chunked encoding, which some proxies handle
+	// poorly. The probe writes only the framing (a few hundred bytes).
+	var probe bytes.Buffer
+	probeW := multipart.NewWriter(&probe)
+	boundary := probeW.Boundary()
+	if err := writeUploadBody(probeW, nil, name, info); err != nil {
+		return "", err
+	}
+	contentLength := int64(probe.Len()) + info.Size()
+
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
+	if err := mw.SetBoundary(boundary); err != nil {
+		return "", err
+	}
 	contentType := mw.FormDataContentType()
 
-	writeBody := func() error {
-		fw, err := mw.CreateFormFile("assetData", name)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(fw, f); err != nil {
-			return err
-		}
-		fields := []struct{ name, value string }{
-			{"deviceAssetId", fmt.Sprintf("%s-%d", name, info.Size())},
-			{"deviceId", "immich-desktop-sync"},
-			{"fileCreatedAt", info.ModTime().UTC().Format(time.RFC3339)},
-			{"fileModifiedAt", info.ModTime().UTC().Format(time.RFC3339)},
-			{"isFavorite", "false"},
-		}
-		for _, field := range fields {
-			if err := writeField(mw, field.name, field.value); err != nil {
-				return err
-			}
-		}
-		return mw.Close()
-	}
-
 	go func() {
-		if err := writeBody(); err != nil {
+		if err := writeUploadBody(mw, f, name, info); err != nil {
 			_ = pw.CloseWithError(err)
 			return
 		}
 		_ = pw.Close()
 	}()
 
-	resp, err := c.do("POST", "/api/assets", pr, contentType)
+	resp, err := c.doWith(c.httpClient, "POST", "/api/assets", pr, contentType, contentLength)
 	if err != nil {
 		_ = pr.CloseWithError(err) // unblock the writer goroutine
 		return "", err
@@ -230,6 +222,35 @@ func (c *Client) GetOriginal(assetID string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	return resp.Body, nil
+}
+
+// writeUploadBody writes the multipart body for an asset upload in the order
+// the Immich API expects: the assetData file part first, then the metadata
+// fields. A nil file writes the file part header but no file bytes, so the
+// caller can measure the framing.
+func writeUploadBody(mw *multipart.Writer, file io.Reader, name string, info os.FileInfo) error {
+	fw, err := mw.CreateFormFile("assetData", name)
+	if err != nil {
+		return err
+	}
+	if file != nil {
+		if _, err := io.Copy(fw, file); err != nil {
+			return err
+		}
+	}
+	fields := []struct{ name, value string }{
+		{"deviceAssetId", fmt.Sprintf("%s-%d", name, info.Size())},
+		{"deviceId", "immich-desktop-sync"},
+		{"fileCreatedAt", info.ModTime().UTC().Format(time.RFC3339)},
+		{"fileModifiedAt", info.ModTime().UTC().Format(time.RFC3339)},
+		{"isFavorite", "false"},
+	}
+	for _, field := range fields {
+		if err := writeField(mw, field.name, field.value); err != nil {
+			return err
+		}
+	}
+	return mw.Close()
 }
 
 func writeField(mw *multipart.Writer, field, value string) error {
