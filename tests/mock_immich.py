@@ -107,6 +107,49 @@ def asset_index(asset_id):
     return -1
 
 
+def seed_file(name, size):
+    """Write a deterministic file of `size` bytes into UPLOAD_DIR and register
+    it as a ready asset, so GET /original serves it without an app upload.
+    Returns (asset_id, sha256). Used by the download e2e to get a large
+    original without driving the upload path."""
+    with LOCK:
+        asset_id = "seed-%d" % (len(STATE["uploaded"]) + 1)
+    ext = os.path.splitext(name)[1]
+    path = os.path.join(UPLOAD_DIR, asset_id + ext)
+    h = hashlib.sha256()
+    remaining = size
+    counter = 0
+    with open(path, "wb") as fh:
+        while remaining > 0:
+            counter += 1
+            block = hashlib.sha256(("%s-%d" % (asset_id, counter)).encode()).digest() * 2048
+            block = block[:remaining]
+            fh.write(block)
+            h.update(block)
+            remaining -= len(block)
+    digest = h.hexdigest()
+    with LOCK:
+        STATE["uploaded"][asset_id] = {
+            "assetId": asset_id, "originalFileName": name, "fileSize": size,
+            "sha256": digest, "storedPath": path,
+            "deviceAssetId": "%s-%d" % (name, size),
+        }
+        STATE["assets"].append({
+            "id": asset_id, "type": "IMAGE", "originalFileName": name,
+            "originalPath": "library/" + asset_id + ext,
+            "checksum": hashlib.md5(asset_id.encode()).hexdigest(),
+            "fileCreatedAt": "2024-06-01T12:00:00.000Z",
+            "fileModifiedAt": "2024-06-01T12:05:00.000Z",
+            "localDateTime": "2024-06-01T12:00:00.000Z",
+            "duration": "0:00:00.000000", "isFavorite": False,
+            "createdAt": "2024-06-01T12:00:00.000Z",
+            "updatedAt": "2024-06-01T12:00:00.000Z",
+            "exifInfo": {"fileSizeInByte": size, "exifImageWidth": 1,
+                         "exifImageHeight": 1, "model": "MockCam"},
+        })
+    return asset_id, digest
+
+
 def parse_multipart(raw, boundary):
     """Return [(name, filename, body_bytes)] for every multipart part."""
     delim = b"--" + boundary
@@ -155,6 +198,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _file(self, path, ctype):
+        """Stream a file as the response body, so a large original does not
+        load into the mock's memory."""
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(os.path.getsize(path)))
+        self.end_headers()
+        with open(path, "rb") as fh:
+            shutil.copyfileobj(fh, self.wfile, 256 * 1024)
+
     def _auth(self):
         return self.headers.get("Authorization", "") == "Bearer " + TOKEN
 
@@ -200,6 +253,19 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 STATE["fail_next"] = int(body.get("count", 1))
             self._json({"ok": True, "fail_next": STATE["fail_next"]})
+            return True
+        if self.path == "/_test/seed_file":
+            try:
+                body = json.loads(self._raw or b"{}")
+            except ValueError:
+                body = {}
+            if body.get("only"):
+                with LOCK:
+                    STATE["assets"] = []
+            asset_id, digest = seed_file(body.get("name", "large.bin"),
+                                         int(body.get("size", 1 << 20)))
+            self._json({"id": asset_id, "name": body.get("name", "large.bin"),
+                        "size": int(body.get("size", 1 << 20)), "sha256": digest})
             return True
         return False
 
@@ -354,8 +420,7 @@ class Handler(BaseHTTPRequestHandler):
             rec = STATE["uploaded"].get(m.group(1))
             if rec and os.path.exists(rec["storedPath"]):
                 # Serve exactly what was received - integrity round trip.
-                with open(rec["storedPath"], "rb") as fh:
-                    self._bytes(fh.read(), "application/octet-stream")
+                self._file(rec["storedPath"], "application/octet-stream")
             else:
                 self._bytes(PNG, "image/png")
         elif m := re.match(r"^/api/assets/(.+)$", self.path):
