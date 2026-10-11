@@ -90,11 +90,31 @@ func (fw *FolderWatcher) addWatch(root, dir string) {
 	fw.watched[root][dir] = true
 }
 
-// rootFor returns the watched root that contains dir, preferring the longest
-// match so that nested roots do not claim each other's directories.
-func (fw *FolderWatcher) rootFor(dir string) string {
+// watchNewDir finds the owning root and records the watch under one lock, so a
+// concurrent RemoveFolder cannot delete the root between finding it and adding
+// the watch (which would leave a stale watch after removal).
+func (fw *FolderWatcher) watchNewDir(dir string) {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
+	root := fw.rootForLocked(dir)
+	if root == "" {
+		return
+	}
+	if err := fw.watcher.Add(dir); err != nil {
+		log.Printf("watcher: add %s: %v", dir, err)
+		return
+	}
+	if fw.watched[root] == nil {
+		fw.watched[root] = make(map[string]bool)
+	}
+	fw.watched[root][dir] = true
+	log.Printf("watcher: watching new dir %s", dir)
+}
+
+// rootForLocked returns the watched root that contains dir, preferring the
+// longest match so that nested roots do not claim each other's directories. The
+// caller must hold fw.mu.
+func (fw *FolderWatcher) rootForLocked(dir string) string {
 	best := ""
 	for root := range fw.watched {
 		if dir == root || strings.HasPrefix(dir, root+string(os.PathSeparator)) {
@@ -162,10 +182,7 @@ func (fw *FolderWatcher) loop() {
 
 			if event.Op&fsnotify.Create != 0 {
 				if info, err := os.Stat(path); err == nil && info.IsDir() {
-					if root := fw.rootFor(path); root != "" {
-						fw.addWatch(root, path)
-						log.Printf("watcher: watching new dir %s", path)
-					}
+					fw.watchNewDir(path)
 					continue
 				}
 			}

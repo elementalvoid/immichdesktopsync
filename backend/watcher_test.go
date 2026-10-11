@@ -157,6 +157,40 @@ func TestRemoveFolderKeepsOtherRoot(t *testing.T) {
 	waitQueued(t, d, "after.jpg")
 }
 
+// TestWatchNewDirRecordsUnderKnownRoot pins what the atomic find-and-watch does:
+// a new directory in a known root is recorded, one outside every root is not.
+func TestWatchNewDirRecordsUnderKnownRoot(t *testing.T) {
+	fw, _ := newTestWatcher(t)
+	root := t.TempDir()
+	if err := fw.AddFolder(root); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "new")
+	if err := os.Mkdir(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fw.watchNewDir(sub)
+
+	fw.mu.Lock()
+	recorded := fw.watched[root][sub]
+	fw.mu.Unlock()
+	if !recorded {
+		t.Errorf("watchNewDir did not record %s under %s", sub, root)
+	}
+
+	stray := filepath.Join(t.TempDir(), "stray")
+	if err := os.Mkdir(stray, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fw.watchNewDir(stray)
+	fw.mu.Lock()
+	_, ok := fw.watched[stray]
+	fw.mu.Unlock()
+	if ok {
+		t.Errorf("watchNewDir recorded the unknown root %s", stray)
+	}
+}
+
 // TestRemoveFolderStillEnqueuesNestedDirsBeforeRemove pins the positive case
 // the two leak tests rely on: a nested directory is watched before removal.
 func TestNestedDirIsWatched(t *testing.T) {
