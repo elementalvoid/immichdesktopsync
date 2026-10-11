@@ -34,11 +34,9 @@ func IsMediaFile(path string) bool {
 	return mediaExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
-func isMediaFile(path string) bool { return IsMediaFile(path) }
-
 type FolderWatcher struct {
-	watcher  *fsnotify.Watcher
-	database *db.DB
+	watcher   *fsnotify.Watcher
+	database  *db.DB
 	onEnqueue func()
 }
 
@@ -103,7 +101,7 @@ func (fw *FolderWatcher) loop() {
 			if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
 				continue
 			}
-			if !isMediaFile(path) {
+			if !IsMediaFile(path) {
 				continue
 			}
 			if last, ok := seen[path]; ok && time.Since(last) < 2*time.Second {

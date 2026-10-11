@@ -170,14 +170,6 @@ func (d *DB) DequeueNextPending(n int, now time.Time, retryDelays []time.Duratio
 	return items, nil
 }
 
-func (d *DB) MarkUploading(id int64) error {
-	_, err := d.conn.Exec(
-		`UPDATE upload_queue SET status='uploading', last_attempt=? WHERE id=?`,
-		time.Now().UTC().Format(time.RFC3339), id,
-	)
-	return err
-}
-
 func (d *DB) MarkDone(id int64, filePath, assetID string) error {
 	tx, err := d.conn.Begin()
 	if err != nil {

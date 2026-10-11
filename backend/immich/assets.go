@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -131,45 +130,6 @@ func (c *Client) SearchMetadata(req models.SearchRequest) ([]models.Asset, error
 	return all, nil
 }
 
-func (c *Client) CheckAssets(deviceAssetIDs []string) (map[string]bool, error) {
-	type checkItem struct {
-		ID string `json:"id"`
-	}
-	type checkRequest struct {
-		Assets []checkItem `json:"assets"`
-	}
-
-	items := make([]checkItem, len(deviceAssetIDs))
-	for i, id := range deviceAssetIDs {
-		items[i] = checkItem{ID: id}
-	}
-
-	body, _ := json.Marshal(checkRequest{Assets: items})
-	resp, err := c.do("POST", "/api/assets/check", bytes.NewReader(body), "application/json")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Results []struct {
-			ID     string `json:"id"`
-			Action string `json:"action"`
-		} `json:"results"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	existing := make(map[string]bool)
-	for _, r := range result.Results {
-		if r.Action == "reject" {
-			existing[r.ID] = true
-		}
-	}
-	return existing, nil
-}
-
 func (c *Client) UploadFile(filePath string) (string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -248,11 +208,6 @@ func (c *Client) GetOriginal(assetID string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	return io.ReadAll(resp.Body)
-}
-
-func (c *Client) GetOriginalResponse(assetID string) (*http.Response, error) {
-	c2 := &http.Client{}
-	return c.doWith(c2, "GET", fmt.Sprintf("/api/assets/%s/original", assetID), nil, "")
 }
 
 func writeField(mw *multipart.Writer, field, value string) error {
