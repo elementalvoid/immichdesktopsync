@@ -26,20 +26,22 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
 	// The upload-queue worker goroutines AND the UI bindings hit the same DB
 	// concurrently. A shared connection pool lets two writers collide instantly
 	// with SQLITE_BUSY ("database is locked"), which made completed uploads stay
 	// stuck as 'uploading' and caused the worker to re-upload files repeatedly.
-	// Pin the pool to one connection so SQLite serializes writers itself, and
-	// add a busy timeout as a second line of defense.
-	conn.SetMaxOpenConns(1)
-	if _, err := conn.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		return nil, fmt.Errorf("sqlite busy_timeout: %w", err)
+	// Pin the pool to one connection so SQLite serializes writers itself, and set
+	// busy_timeout in the DSN so every connection (including one opened after a
+	// driver error drops the old one) gets the second line of defense.
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
 	}
+	conn, err := sql.Open("sqlite", path+separator+"_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	conn.SetMaxOpenConns(1)
 	d := &DB{
 		conn:          conn,
 		cacheMaxBytes: 512 << 20, // 512 MiB
