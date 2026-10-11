@@ -232,9 +232,10 @@ func (a *App) GetThumbnail(assetID, size string) ([]byte, error) {
 	return data, nil
 }
 
+// GetFolders reads the folders table, which is the single source of truth.
 func (a *App) GetFolders() ([]string, error) {
 	if a.db == nil {
-		return a.cfg.Folders, nil
+		return nil, nil
 	}
 	return a.db.GetFolders()
 }

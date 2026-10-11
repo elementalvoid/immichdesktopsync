@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -38,6 +39,12 @@ type FolderWatcher struct {
 	watcher   *fsnotify.Watcher
 	database  *db.DB
 	onEnqueue func()
+
+	// watched maps a watched root to every directory watched for it, so
+	// RemoveFolder can remove the nested watches AddFolder and loop() created.
+	// The loop() goroutine and the UI goroutine both touch it.
+	mu      sync.Mutex
+	watched map[string]map[string]bool
 }
 
 func NewFolderWatcher(database *db.DB, onEnqueue func()) (*FolderWatcher, error) {
@@ -45,26 +52,78 @@ func NewFolderWatcher(database *db.DB, onEnqueue func()) (*FolderWatcher, error)
 	if err != nil {
 		return nil, err
 	}
-	return &FolderWatcher{watcher: w, database: database, onEnqueue: onEnqueue}, nil
+	return &FolderWatcher{
+		watcher:   w,
+		database:  database,
+		onEnqueue: onEnqueue,
+		watched:   make(map[string]map[string]bool),
+	}, nil
 }
 
 func (fw *FolderWatcher) AddFolder(root string) error {
+	root = filepath.Clean(root)
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Printf("watcher: walk %s: %v", path, err)
 			return nil
 		}
 		if info.IsDir() {
-			if watchErr := fw.watcher.Add(path); watchErr != nil {
-				log.Printf("watcher: add %s: %v", path, watchErr)
-			}
+			fw.addWatch(root, path)
 		}
 		return nil
 	})
 }
 
-func (fw *FolderWatcher) RemoveFolder(path string) error {
-	return fw.watcher.Remove(path)
+// addWatch registers dir with fsnotify and records it under root. It records
+// only a watch that was added, so RemoveFolder never tries to drop a watch that
+// does not exist.
+func (fw *FolderWatcher) addWatch(root, dir string) {
+	if err := fw.watcher.Add(dir); err != nil {
+		log.Printf("watcher: add %s: %v", dir, err)
+		return
+	}
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	if fw.watched[root] == nil {
+		fw.watched[root] = make(map[string]bool)
+	}
+	fw.watched[root][dir] = true
+}
+
+// rootFor returns the watched root that contains dir, preferring the longest
+// match so that nested roots do not claim each other's directories.
+func (fw *FolderWatcher) rootFor(dir string) string {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	best := ""
+	for root := range fw.watched {
+		if dir == root || strings.HasPrefix(dir, root+string(os.PathSeparator)) {
+			if len(root) > len(best) {
+				best = root
+			}
+		}
+	}
+	return best
+}
+
+func (fw *FolderWatcher) RemoveFolder(root string) error {
+	root = filepath.Clean(root)
+	fw.mu.Lock()
+	dirs := fw.watched[root]
+	delete(fw.watched, root)
+	fw.mu.Unlock()
+
+	if dirs == nil {
+		// No recorded root: fall back to removing the path itself.
+		return fw.watcher.Remove(root)
+	}
+	var firstErr error
+	for dir := range dirs {
+		if err := fw.watcher.Remove(dir); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (fw *FolderWatcher) Start() {
@@ -89,9 +148,8 @@ func (fw *FolderWatcher) loop() {
 
 			if event.Op&fsnotify.Create != 0 {
 				if info, err := os.Stat(path); err == nil && info.IsDir() {
-					if err := fw.watcher.Add(path); err != nil {
-						log.Printf("watcher: auto-add dir %s: %v", path, err)
-					} else {
+					if root := fw.rootFor(path); root != "" {
+						fw.addWatch(root, path)
 						log.Printf("watcher: watching new dir %s", path)
 					}
 					continue
