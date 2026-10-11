@@ -51,6 +51,27 @@ func TestThumbnailCacheKeepsEverythingUnderBudget(t *testing.T) {
 	}
 }
 
+// TestThumbnailCacheBytesTrackTable keeps the in-memory byte total honest, so
+// eviction does not skip the budget scan when it should run.
+func TestThumbnailCacheBytesTrackTable(t *testing.T) {
+	d := openCacheDB(t, 1<<20, time.Hour)
+	for _, key := range []string{"a", "b", "c"} {
+		if err := d.CacheThumbnail(key, make([]byte, 100)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := d.cacheBytes.Load(), cacheBytes(t, d); got != want {
+		t.Errorf("cacheBytes = %d, table holds %d", got, want)
+	}
+	// Replacing a key must not double-count its bytes.
+	if err := d.CacheThumbnail("a", make([]byte, 100)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := d.cacheBytes.Load(), cacheBytes(t, d); got != want {
+		t.Errorf("after replace cacheBytes = %d, table holds %d", got, want)
+	}
+}
+
 // TestThumbnailCacheEvictsOldestOverBudget is the guard against unbounded
 // growth: the cache must not hold more than its byte budget, and the oldest
 // rows go first.

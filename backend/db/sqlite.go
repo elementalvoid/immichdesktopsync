@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"immich-desktop-sync/backend/models"
@@ -17,6 +18,11 @@ type DB struct {
 	// Thumbnail cache policy. Open sets the defaults; tests override them.
 	cacheMaxBytes int64
 	cacheTTL      time.Duration
+
+	// cacheBytes is the exact stored BLOB total. It lets eviction skip the
+	// full-cache window scan on every insert; the scan runs only when over
+	// budget. Atomic because UI thumbnail requests can run concurrently.
+	cacheBytes atomic.Int64
 }
 
 func Open(path string) (*DB, error) {
@@ -42,6 +48,12 @@ func Open(path string) (*DB, error) {
 	if err := d.migrate(); err != nil {
 		return nil, err
 	}
+	var stored int64
+	if err := d.conn.QueryRow(
+		`SELECT COALESCE(SUM(LENGTH(data)), 0) FROM thumbnail_cache`).Scan(&stored); err != nil {
+		return nil, fmt.Errorf("sqlite cache size: %w", err)
+	}
+	d.cacheBytes.Store(stored)
 	return d, nil
 }
 
@@ -77,6 +89,9 @@ func (d *DB) migrate() error {
 			data     BLOB,
 			cached_at TEXT NOT NULL
 		);
+
+		CREATE INDEX IF NOT EXISTS idx_thumbnail_cache_cached_at
+			ON thumbnail_cache(cached_at);
 	`)
 	return err
 }
@@ -276,33 +291,42 @@ func (d *DB) GetFolders() ([]string, error) {
 
 func (d *DB) CacheThumbnail(key string, data []byte) error {
 	now := time.Now().UTC()
+	// INSERT OR REPLACE hides the replaced size, so read it first. A miss leaves
+	// oldLen at 0; a stale count only makes eviction run slightly early.
+	var oldLen int64
+	_ = d.conn.QueryRow(`SELECT LENGTH(data) FROM thumbnail_cache WHERE asset_id=?`, key).Scan(&oldLen)
 	if _, err := d.conn.Exec(
 		`INSERT OR REPLACE INTO thumbnail_cache (asset_id, data, cached_at) VALUES (?,?,?)`,
 		key, data, now.Format(time.RFC3339Nano),
 	); err != nil {
 		return err
 	}
+	d.cacheBytes.Add(int64(len(data)) - oldLen)
 	return d.evictThumbnails(now)
 }
 
 // evictThumbnails drops expired rows, then the oldest rows that push the cache
-// over its byte budget. It runs as separate auto-commit statements rather than
-// one transaction: a cached thumbnail may be briefly over budget, and an open
-// transaction would pin the pool's single connection (see DequeueNextPending).
+// over its byte budget. The byte-budget window scan only runs when the in-memory
+// total says the cache is over budget, so a normal insert does not scan every
+// row. It runs as separate auto-commit statements rather than one transaction: a
+// cached thumbnail may be briefly over budget, and an open transaction would pin
+// the pool's single connection (see DequeueNextPending).
 func (d *DB) evictThumbnails(now time.Time) error {
-	if _, err := d.conn.Exec(
+	freed, err := d.deleteThumbnailsReturningSize(
 		`DELETE FROM thumbnail_cache WHERE cached_at < ?`,
-		now.Add(-d.cacheTTL).Format(time.RFC3339Nano),
-	); err != nil {
+		now.Add(-d.cacheTTL).Format(time.RFC3339Nano))
+	if err != nil {
 		return err
 	}
-	if d.cacheMaxBytes <= 0 {
+	d.cacheBytes.Add(-freed)
+
+	if d.cacheMaxBytes <= 0 || d.cacheBytes.Load() <= d.cacheMaxBytes {
 		return nil
 	}
 	// Keep the newest rows while their running total fits the budget. rowid
 	// breaks cached_at ties (RFC3339 has one-second resolution) and grows with
 	// each INSERT OR REPLACE.
-	_, err := d.conn.Exec(`
+	freed, err = d.deleteThumbnailsReturningSize(`
 		DELETE FROM thumbnail_cache
 		WHERE rowid IN (
 			SELECT rowid FROM (
@@ -312,7 +336,30 @@ func (d *DB) evictThumbnails(now time.Time) error {
 			)
 			WHERE running > ?
 		)`, d.cacheMaxBytes)
-	return err
+	if err != nil {
+		return err
+	}
+	d.cacheBytes.Add(-freed)
+	return nil
+}
+
+// deleteThumbnailsReturningSize runs a DELETE and sums the stored BLOB sizes of
+// the rows it removed, so the caller can keep the byte count exact.
+func (d *DB) deleteThumbnailsReturningSize(query string, args ...any) (int64, error) {
+	rows, err := d.conn.Query(query+` RETURNING LENGTH(data)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var freed int64
+	for rows.Next() {
+		var n int64
+		if err := rows.Scan(&n); err != nil {
+			return 0, err
+		}
+		freed += n
+	}
+	return freed, rows.Err()
 }
 
 func (d *DB) GetThumbnail(key string) ([]byte, error) {
@@ -325,6 +372,9 @@ func (d *DB) GetThumbnail(key string) ([]byte, error) {
 }
 
 func (d *DB) ClearCache() error {
-	_, err := d.conn.Exec(`DELETE FROM thumbnail_cache`)
-	return err
+	if _, err := d.conn.Exec(`DELETE FROM thumbnail_cache`); err != nil {
+		return err
+	}
+	d.cacheBytes.Store(0)
+	return nil
 }
