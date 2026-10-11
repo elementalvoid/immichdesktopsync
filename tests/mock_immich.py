@@ -158,6 +158,28 @@ class Handler(BaseHTTPRequestHandler):
     def _auth(self):
         return self.headers.get("Authorization", "") == "Bearer " + TOKEN
 
+    def _read_chunked(self):
+        """Decode a Transfer-Encoding: chunked request body. The stdlib
+        BaseHTTPRequestHandler does not decode this, but the Go client streams
+        uploads through an io.Pipe and therefore sends no Content-Length."""
+        body = bytearray()
+        while True:
+            line = self.rfile.readline()
+            size = int(line.split(b";", 1)[0].strip() or b"0", 16)
+            if size == 0:
+                # Consume the trailer section, terminated by a blank line.
+                while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                    pass
+                return bytes(body)
+            body += self.rfile.read(size)
+            self.rfile.read(2)  # CRLF after each chunk
+
+    def _read_body(self):
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            return self._read_chunked()
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length) if length else b""
+
     def log_message(self, fmt, *args):
         print("[mock-immich] %s %s -> %s" % (self.command, self.path, fmt % args),
               flush=True)
@@ -258,8 +280,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -------------------------------------------------------------- verbs ---
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        self._raw = self.rfile.read(length) if length else b""
+        self._raw = self._read_body()
 
         if self.path.startswith("/_test/"):
             if self._control_post():
