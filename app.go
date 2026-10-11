@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -26,6 +27,10 @@ type App struct {
 	watcher  *backend.FolderWatcher
 	proxy    *backend.StreamProxy
 	thumbSem chan struct{}
+
+	mu          sync.Mutex
+	fetchCtx    context.Context
+	fetchCancel context.CancelFunc
 }
 
 func NewApp(app *application.App) *App {
@@ -66,8 +71,14 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 
 	if a.db != nil {
 		a.queue = backend.NewUploadQueue(a.db, a.client,
-			func() { a.app.Event.Emit("upload:started") },
-			func() { a.app.Event.Emit("upload:done") },
+			func() {
+				a.app.Event.Emit("upload:started")
+				a.app.Event.Emit("upload:changed")
+			},
+			func() {
+				a.app.Event.Emit("upload:done")
+				a.app.Event.Emit("upload:changed")
+			},
 		)
 		a.queue.Start()
 	}
@@ -75,7 +86,7 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	if a.db != nil {
 		var onEnqueue func()
 		if a.queue != nil {
-			onEnqueue = a.queue.Notify
+			onEnqueue = a.notifyUploads
 		}
 		fw, err := backend.NewFolderWatcher(a.db, onEnqueue)
 		if err != nil {
@@ -117,13 +128,14 @@ func (a *App) handleFileDrop(paths []string) {
 			count++
 		}
 	}
-	if count > 0 && a.queue != nil {
-		a.queue.Notify()
+	if count > 0 {
+		a.notifyUploads()
 	}
 	a.app.Event.Emit("files:dropped", count)
 }
 
 func (a *App) shutdown() {
+	a.cancelFetch()
 	if a.proxy != nil {
 		a.proxy.Close()
 	}
@@ -147,6 +159,7 @@ func (a *App) Login(serverURL, email, password string) (*models.User, error) {
 }
 
 func (a *App) Logout() error {
+	a.cancelFetch()
 	return a.auth.Logout()
 }
 
@@ -158,11 +171,23 @@ func (a *App) GetServerURL() string {
 	return a.cfg.ServerURL
 }
 
-func (a *App) GetAssets() ([]models.Asset, error) {
+// GetAssetsPage returns one page of the library. AssetPage.HasNext reports
+// whether a further page exists.
+func (a *App) GetAssetsPage(page, size int) (*models.AssetPage, error) {
 	if !a.auth.IsAuthenticated() {
 		return nil, fmt.Errorf("not authenticated")
 	}
-	return a.client.SearchMetadata(models.SearchRequest{})
+	if page < 1 {
+		page = 1
+	}
+	if size <= 0 {
+		size = 200
+	}
+	items, hasNext, err := a.client.SearchMetadataPage(a.fetchContext(), page, size, models.SearchRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &models.AssetPage{Items: items, HasNext: hasNext}, nil
 }
 
 func (a *App) GetServerVersion() (string, error) {
@@ -291,9 +316,7 @@ func (a *App) RetryFailed() error {
 	if err := a.db.ResetFailedUploads(); err != nil {
 		return err
 	}
-	if a.queue != nil {
-		a.queue.Notify()
-	}
+	a.notifyUploads()
 	return nil
 }
 
@@ -413,7 +436,36 @@ func (a *App) scanFolder(root string) {
 		log.Printf("scanFolder %s: %v", root, err)
 	}
 	log.Printf("scanFolder %s: enqueued %d files", root, count)
-	if count > 0 && a.queue != nil {
+	if count > 0 {
+		a.notifyUploads()
+	}
+}
+
+// fetchContext returns the context for library fetches. A logout cancels it,
+// so an in-flight page fetch stops.
+func (a *App) fetchContext() context.Context {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.fetchCtx == nil {
+		a.fetchCtx, a.fetchCancel = context.WithCancel(context.Background())
+	}
+	return a.fetchCtx
+}
+
+// cancelFetch cancels the in-flight library fetch, if any.
+func (a *App) cancelFetch() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.fetchCancel != nil {
+		a.fetchCancel()
+		a.fetchCtx, a.fetchCancel = nil, nil
+	}
+}
+
+// notifyUploads wakes the queue worker and tells the UI the queue changed.
+func (a *App) notifyUploads() {
+	if a.queue != nil {
 		a.queue.Notify()
 	}
+	a.app.Event.Emit("upload:changed")
 }

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
-  import { GetAssets, GetAlbums, GetAlbumAssets } from '../../bindings/immich-desktop-sync/app';
+  import { GetAssetsPage, GetAlbums, GetAlbumAssets } from '../../bindings/immich-desktop-sync/app';
   import { Events } from '@wailsio/runtime';
   import PhotoGrid from '../components/PhotoGrid.svelte';
   import Lightbox from '../components/Lightbox.svelte';
   import TimelineRail from '../components/TimelineRail.svelte';
-  import { groupByDate, buildTimeline, type Group } from '../lib/gallery';
+  import { groupByDate, buildTimeline, appendAssets, type Group } from '../lib/gallery';
   import { getThumbUrl } from '../lib/thumbCache';
 
   // Timeline grouping (photos view only)
@@ -97,11 +97,34 @@
     albumThumbnailAssetId: string;
   }
 
+  const PAGE_SIZE = 200;
   let allAssets: Asset[] = [];
   let albums: Album[] = [];
   let view: 'photos' | 'albums' = 'photos';
   let loading = false;
   let error = '';
+  let hasNext = false;
+  let nextPage = 1;
+  let loadingMore = false;
+  let moreError = '';
+
+  // Loads the next page when the sentinel at the bottom of the grid enters view.
+  let sentinelEl: HTMLElement | null = null;
+  let sentinelObserver: IntersectionObserver | null = null;
+  function sentinelAction(node: HTMLElement) {
+    sentinelEl = node;
+    sentinelObserver = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) loadMore();
+    }, { rootMargin: '600px' });
+    sentinelObserver.observe(node);
+    return {
+      destroy() {
+        sentinelObserver?.disconnect();
+        sentinelObserver = null;
+        sentinelEl = null;
+      },
+    };
+  }
 
   let openAlbum: Album | null = null;
   let albumAssets: Asset[] = [];
@@ -124,19 +147,44 @@
   async function loadData() {
     loading = true;
     error = '';
+    moreError = '';
     pendingUploads = 0;
     measured = false;
     offsets.clear();
     activeDateKey = null;
     try {
-      const [a, al] = await Promise.all([GetAssets(), GetAlbums()]);
-      allAssets = (a as Asset[]) ?? [];
+      const [first, al] = await Promise.all([GetAssetsPage(1, PAGE_SIZE), GetAlbums()]);
+      allAssets = (first?.items as Asset[]) ?? [];
+      hasNext = first?.hasNext ?? false;
+      nextPage = 2;
       albums = (al as Album[]) ?? [];
     } catch (e: any) {
       error = String(e).replace(/^Error: /, '');
     } finally {
       loading = false;
       gridKey++;
+    }
+  }
+
+  async function loadMore() {
+    if (loading || loadingMore || !hasNext) return;
+    loadingMore = true;
+    try {
+      const next = await GetAssetsPage(nextPage, PAGE_SIZE);
+      allAssets = appendAssets(allAssets, (next?.items as Asset[]) ?? []);
+      hasNext = next?.hasNext ?? false;
+      nextPage++;
+      measured = false; // the grid grew, so re-measure timeline offsets
+    } catch (e: any) {
+      moreError = String(e).replace(/^Error: /, '');
+    } finally {
+      loadingMore = false;
+      await tick();
+      // Re-observe so a sentinel that is still on screen loads the next page.
+      if (hasNext && sentinelEl && sentinelObserver) {
+        sentinelObserver.unobserve(sentinelEl);
+        sentinelObserver.observe(sentinelEl);
+      }
     }
   }
 
@@ -273,6 +321,18 @@
             </div>
           {/each}
         {/key}
+        {#if moreError}
+          <div class="rounded-lg bg-red-900/40 border border-red-500/50 px-4 py-3 text-sm text-red-300">{moreError}</div>
+        {:else if hasNext}
+          <div use:sentinelAction class="flex h-10 items-center justify-center">
+            {#if loadingMore}
+              <svg class="h-5 w-5 animate-spin text-[#585b70]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+              </svg>
+            {/if}
+          </div>
+        {/if}
       {/if}
 
     {:else}

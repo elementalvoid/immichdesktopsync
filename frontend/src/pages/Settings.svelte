@@ -17,7 +17,6 @@
   let manualDownloadsPath = '';
 
   onMount(async () => {
-    uploads.refresh();
     downloadsFolder = await GetDownloadsFolder();
   });
 

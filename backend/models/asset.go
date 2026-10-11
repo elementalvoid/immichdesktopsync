@@ -64,6 +64,13 @@ func formatSeconds(sec float64) string {
 	return fmt.Sprintf("%d:%02d:%02d", total/3600, (total%3600)/60, total%60)
 }
 
+// AssetPage is one page of search results. HasNext reports whether the
+// server holds a further page.
+type AssetPage struct {
+	Items   []Asset `json:"items"`
+	HasNext bool    `json:"hasNext"`
+}
+
 type UploadQueueItem struct {
 	ID          int64  `json:"id"`
 	FilePath    string `json:"filePath"`

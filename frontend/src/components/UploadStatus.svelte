@@ -15,7 +15,6 @@
     retrying = true;
     try {
       await RetryFailed();
-      await uploads.refresh();
     } finally {
       retrying = false;
     }

@@ -27,6 +27,15 @@ export interface Asset {
 }
 
 /**
+ * AssetPage is one page of search results. HasNext reports whether the
+ * server holds a further page.
+ */
+export interface AssetPage {
+    "items": Asset[] | null;
+    "hasNext": boolean;
+}
+
+/**
  * Duration accepts either Immich's "H:MM:SS" string or a numeric seconds
  * value (some server versions return a number) and normalizes to a string.
  */

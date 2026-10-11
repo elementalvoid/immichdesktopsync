@@ -4,6 +4,7 @@
 export type {
     Album,
     Asset,
+    AssetPage,
     Duration,
     ExifInfo,
     UploadQueueItem,

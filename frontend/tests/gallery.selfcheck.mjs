@@ -4,6 +4,7 @@ import {
   groupByDate,
   buildTimeline,
   parseDate,
+  appendAssets,
 } from '../src/lib/gallery.ts';
 
 let failed = 0;
@@ -51,6 +52,15 @@ assert(!tl.some((y) => isNaN(y.year)), 'no NaN year from No Date group');
 // parseDate fallback
 assert(parseDate({ id: 'x', localDateTime: 'junk' }) === null, 'invalid date -> null');
 assert(parseDate({ id: 'x', localDateTime: '', fileCreatedAt: '2020-01-01T00:00:00Z' }) !== null, 'fallback to fileCreatedAt');
+
+// paging: append keeps order, drops repeated ids, and skips the copy when empty
+const page1 = [{ id: 'p1' }, { id: 'p2' }];
+const page2 = [{ id: 'p3' }, { id: 'p2' }];
+const merged = appendAssets(page1, page2);
+assert(merged.map((a) => a.id).join(',') === 'p1,p2,p3', 'append keeps order and drops the repeated id: ' + merged.map((a) => a.id));
+assert(page1.map((a) => a.id).join(',') === 'p1,p2', 'append does not mutate the first page');
+assert(appendAssets(page1, []) === page1, 'append of an empty page returns the same array');
+assert(appendAssets(page1, [{ id: 'p1' }]) === page1, 'append of only-seen ids returns the same array');
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILURE(S)`);
 process.exit(failed === 0 ? 0 : 1);

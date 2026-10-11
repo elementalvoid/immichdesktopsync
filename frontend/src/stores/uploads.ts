@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { Events } from '@wailsio/runtime';
 import { GetUploadQueue, GetFolders, AddFolder, RemoveFolder, SelectFolder } from '../../bindings/immich-desktop-sync/app';
 
 export interface UploadQueueItem {
@@ -17,44 +18,48 @@ export interface UploadsState {
 }
 
 function createUploadsStore() {
-  const { subscribe, set, update } = writable<UploadsState>({
+  const { subscribe, update } = writable<UploadsState>({
     queue: [],
     folders: [],
     loading: false,
   });
 
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // Named so the event handler is the same function on bind and unbind.
+  async function refresh() {
+    try {
+      const [queue, folders] = await Promise.all([
+        GetUploadQueue(),
+        GetFolders(),
+      ]);
+      update(s => ({
+        ...s,
+        queue: (queue as UploadQueueItem[]) ?? [],
+        folders: (folders as string[]) ?? [],
+      }));
+    } catch (e) {
+      console.error('uploads refresh:', e);
+    }
+  }
+
+  let bound = false;
 
   return {
     subscribe,
+    refresh,
 
-    async refresh() {
-      try {
-        const [queue, folders] = await Promise.all([
-          GetUploadQueue(),
-          GetFolders(),
-        ]);
-        update(s => ({
-          ...s,
-          queue: (queue as UploadQueueItem[]) ?? [],
-          folders: (folders as string[]) ?? [],
-        }));
-      } catch (e) {
-        console.error('uploads refresh:', e);
-      }
+    // The backend emits upload:changed on every enqueue, start, done, and
+    // fail, so the store does not poll.
+    bindEvents() {
+      if (bound) return;
+      bound = true;
+      Events.On('upload:changed', refresh);
+      refresh();
     },
 
-    startPolling(intervalMs = 5000) {
-      if (pollTimer) return;
-      pollTimer = setInterval(() => this.refresh(), intervalMs);
-      this.refresh();
-    },
-
-    stopPolling() {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
+    unbindEvents() {
+      if (!bound) return;
+      bound = false;
+      Events.Off('upload:changed');
     },
 
     async addFolder() {

@@ -2,8 +2,11 @@ package immich
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -14,6 +17,8 @@ import (
 	"runtime"
 	"strconv"
 	"testing"
+
+	"immich-desktop-sync/backend/models"
 )
 
 func sha256File(t *testing.T, path string) string {
@@ -192,5 +197,78 @@ func TestUploadFileDoesNotBufferWholeFile(t *testing.T) {
 
 	if growth := int64(after.HeapAlloc) - int64(before.HeapAlloc); growth > size/4 {
 		t.Fatalf("heap grew by %d bytes during a %d-byte upload; the file was buffered", growth, size)
+	}
+}
+
+// TestSearchMetadataPagePaginates checks that one call fetches one page and
+// that the server hasNext flag reaches the caller.
+func TestSearchMetadataPagePaginates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Page int `json:"page"`
+			Size int `json:"size"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Size != 2 {
+			t.Errorf("size = %d, want 2", req.Size)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"assets":{"total":4,"count":2,"page":%d,"pages":2,"hasNext":%t,`+
+			`"items":[{"id":"p%d-a"},{"id":"p%d-b"}]}}`, req.Page, req.Page < 2, req.Page, req.Page)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "token")
+
+	items, hasNext, err := c.SearchMetadataPage(t.Context(), 1, 2, models.SearchRequest{})
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	if !hasNext {
+		t.Error("page 1: hasNext = false, want true")
+	}
+	if len(items) != 2 || items[0].ID != "p1-a" || items[1].ID != "p1-b" {
+		t.Errorf("page 1 items = %+v, want p1-a and p1-b", items)
+	}
+
+	items, hasNext, err = c.SearchMetadataPage(t.Context(), 2, 2, models.SearchRequest{})
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	if hasNext {
+		t.Error("page 2: hasNext = true, want false")
+	}
+	if len(items) != 2 || items[0].ID != "p2-a" {
+		t.Errorf("page 2 items = %+v, want p2-a and p2-b", items)
+	}
+}
+
+// TestSearchMetadataPageHonorsContext proves that cancelling the caller's
+// context aborts an in-flight request, which is how a logout stops a fetch.
+func TestSearchMetadataPageHonorsContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+	}))
+	defer func() {
+		close(release)
+		srv.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	c := NewClient(srv.URL, "token")
+	if _, _, err := c.SearchMetadataPage(ctx, 1, 2, models.SearchRequest{}); err == nil {
+		t.Fatal("SearchMetadataPage returned a nil error after the context was cancelled")
 	}
 }

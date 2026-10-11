@@ -86,6 +86,15 @@ export function groupByDate<T extends RawAsset>(assets: T[]): Group<T>[] {
   return groups;
 }
 
+// Append one page of assets, skipping ids already loaded. A library that
+// changes during paging can repeat an asset across pages, so dedupe by id.
+export function appendAssets<T extends RawAsset>(current: T[], incoming: T[]): T[] {
+  if (incoming.length === 0) return current;
+  const seen = new Set(current.map((a) => a.id));
+  const fresh = incoming.filter((a) => !seen.has(a.id));
+  return fresh.length === 0 ? current : [...current, ...fresh];
+}
+
 export function buildTimeline(groups: Group[]): TimelineYear[] {
   const byYear = new Map<number, Set<number>>();
   for (const g of groups) {

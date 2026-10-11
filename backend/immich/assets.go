@@ -2,6 +2,7 @@ package immich
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -95,39 +96,29 @@ type searchMetadataResponse struct {
 	} `json:"assets"`
 }
 
-func (c *Client) SearchMetadata(req models.SearchRequest) ([]models.Asset, error) {
-	var all []models.Asset
-	page := 1
-
-	for {
-		payload := searchMetadataPayload{
-			Page:         page,
-			Size:         1000,
-			WithArchived: req.WithArchived,
-			Type:         req.Type,
-		}
-
-		body, _ := json.Marshal(payload)
-		resp, err := c.do("POST", "/api/search/metadata", bytes.NewReader(body), "application/json")
-		if err != nil {
-			return nil, err
-		}
-
-		var result searchMetadataResponse
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-
-		all = append(all, result.Assets.Items...)
-		if !result.Assets.HasNext {
-			break
-		}
-		page++
+// SearchMetadataPage fetches one page of search results. hasNext reports
+// whether the server holds a further page. ctx cancels an in-flight request,
+// so a logout stops a slow fetch.
+func (c *Client) SearchMetadataPage(ctx context.Context, page, size int, req models.SearchRequest) ([]models.Asset, bool, error) {
+	payload := searchMetadataPayload{
+		Page:         page,
+		Size:         size,
+		WithArchived: req.WithArchived,
+		Type:         req.Type,
 	}
 
-	return all, nil
+	body, _ := json.Marshal(payload)
+	resp, err := c.doCtx(ctx, "POST", "/api/search/metadata", bytes.NewReader(body), "application/json")
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	var result searchMetadataResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, false, err
+	}
+	return result.Assets.Items, result.Assets.HasNext, nil
 }
 
 // UploadFile streams the file to /api/assets. The multipart body is written
@@ -173,7 +164,7 @@ func (c *Client) UploadFile(filePath string) (string, error) {
 		_ = pw.Close()
 	}()
 
-	resp, err := c.doWith(c.httpClient, "POST", "/api/assets", pr, contentType, contentLength)
+	resp, err := c.doWith(context.Background(), c.httpClient, "POST", "/api/assets", pr, contentType, contentLength)
 	if err != nil {
 		_ = pr.CloseWithError(err) // unblock the writer goroutine
 		return "", err

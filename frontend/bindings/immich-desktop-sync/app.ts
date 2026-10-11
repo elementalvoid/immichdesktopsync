@@ -37,14 +37,21 @@ export function GetAssetInfo(assetID: string): $CancellablePromise<models$0.Asse
     return $Call.ByID(410180401, assetID);
 }
 
-export function GetAssets(): $CancellablePromise<models$0.Asset[] | null> {
-    return $Call.ByID(4285129902);
+/**
+ * GetAssetsPage returns one page of the library. AssetPage.HasNext reports
+ * whether a further page exists.
+ */
+export function GetAssetsPage(page: number, size: number): $CancellablePromise<models$0.AssetPage | null> {
+    return $Call.ByID(1161358901, page, size);
 }
 
 export function GetDownloadsFolder(): $CancellablePromise<string> {
     return $Call.ByID(518210492);
 }
 
+/**
+ * GetFolders reads the folders table, which is the single source of truth.
+ */
 export function GetFolders(): $CancellablePromise<string[] | null> {
     return $Call.ByID(452841144);
 }

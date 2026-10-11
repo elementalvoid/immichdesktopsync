@@ -16,26 +16,19 @@
 
   onMount(async () => {
     await auth.init();
-    if ($auth.authenticated) {
-      uploads.startPolling();
-    }
 
     Events.On('files:dropped', () => {
       dragCounter = 0;
       isDragging = false;
-      uploads.refresh();
     });
-
-    Events.On('upload:started', () => uploads.refresh());
-    Events.On('upload:done', () => uploads.refresh());
 
     window.addEventListener('dragenter', onDragEnter);
     window.addEventListener('dragleave', onDragLeave);
   });
 
   onDestroy(() => {
-    uploads.stopPolling();
-    Events.Off('files:dropped', 'upload:started', 'upload:done');
+    uploads.unbindEvents();
+    Events.Off('files:dropped');
     window.removeEventListener('dragenter', onDragEnter);
     window.removeEventListener('dragleave', onDragLeave);
   });
@@ -52,9 +45,9 @@
   }
 
   $: if ($auth.authenticated) {
-    uploads.startPolling();
+    uploads.bindEvents();
   } else {
-    uploads.stopPolling();
+    uploads.unbindEvents();
   }
 
   $: queueSize = $uploads.queue.filter(i => i.status !== 'done').length;
