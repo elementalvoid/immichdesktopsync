@@ -1,0 +1,222 @@
+name: Build installers
+
+# Builds the native installers for Windows, macOS, Linux and Android, attaches
+# SLSA build provenance to every file, and (on a v* tag) publishes them as
+# GitHub Release assets.
+#
+# Packaging is done with the project's own `wails3 task` targets on a native
+# runner per OS, so no packaging logic is duplicated here. Actions are pinned
+# to commit SHAs; Dependabot keeps the pins current.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp (ignored on tag pushes)"
+        required: false
+        default: "0.0.0"
+
+# Least privilege by default; each job opts into what it needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    # id-token + attestations + artifact-metadata are required to mint and
+    # store Sigstore build provenance (see the attest step below).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            package: wails3 task windows:package
+            artifacts: bin/*installer.exe
+          - name: macos
+            os: macos-latest
+            package: |
+              wails3 task darwin:package:universal
+              wails3 task darwin:create:dmg
+            artifacts: bin/*.dmg
+          - name: linux
+            os: ubuntu-latest
+            package: wails3 task linux:package
+            artifacts: |
+              bin/*.AppImage
+              bin/*.deb
+              bin/*.rpm
+              bin/*.pkg.tar.*
+          - name: android
+            os: ubuntu-latest
+            package: wails3 task android:package:fat
+            artifacts: bin/*.apk
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install wails3
+        # The CLI pulls deps that are not in go.sum, so it must be installed
+        # with an explicit @version. Resolve that from go.mod to avoid drift.
+        shell: bash
+        run: |
+          version=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@${version}"
+
+      # --- per-OS build dependencies -------------------------------------
+      - name: Install NSIS (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\NSIS"
+          }
+
+      - name: Install GTK4 / WebKitGTK 6.0 (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        if: matrix.name == 'android'
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Ensure Android NDK (Android)
+        if: matrix.name == 'android'
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          SDK="${SDK:-/usr/local/lib/android/sdk}"
+          sdkmanager="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          installed=$(find "$SDK/ndk" -mindepth 1 -maxdepth 1 \
+            -print -quit 2>/dev/null)
+          if [ -z "$installed" ]; then
+            yes | "$sdkmanager" --licenses >/dev/null || true
+            "$sdkmanager" "ndk;27.0.12077973"
+          fi
+          ndk=$(find "$SDK/ndk" -mindepth 1 -maxdepth 1 -type d \
+            | sort -V | tail -1)
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+
+      # --- version stamping ----------------------------------------------
+      - name: Resolve version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${INPUT_VERSION:-0.0.0}"
+          fi
+          echo "APP_VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Stamp version
+        # Node is cross-platform, so one script covers every runner.
+        run: |
+          node - "$APP_VERSION" <<'NODE'
+          const fs = require('fs');
+          const v = process.argv[2];
+          const edit = (file, re, to) => {
+            const before = fs.readFileSync(file, 'utf8');
+            const after = before.replace(re, to);
+            if (after === before) throw new Error('no match: ' + file);
+            fs.writeFileSync(file, after);
+          };
+          const dq = /(version:\s*")[^"]+(")/;
+          edit('build/config.yml', dq, `$1${v}$2`);
+          edit('build/linux/nfpm/nfpm.yaml', dq, `$1${v}$2`);
+          const verName = /(versionName\s+")[^"]+(")/;
+          edit('build/android/app/build.gradle', verName, `$1${v}$2`);
+          const plistKey = (key) => new RegExp(
+            '(<key>' + key + '</key>\\s*<string>)[^<]+(</string>)'
+          );
+          const ios = 'build/darwin/Info.plist';
+          edit(ios, plistKey('CFBundleShortVersionString'), `$1${v}$2`);
+          edit(ios, plistKey('CFBundleVersion'), `$1${v}$2`);
+          NODE
+
+      # --- build ----------------------------------------------------------
+      - name: Package
+        run: ${{ matrix.package }}
+
+      - name: Upload build artifacts
+        # actions/upload-artifact v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: immich-desktop-sync-${{ matrix.name }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ matrix.artifacts }}
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      # actions/download-artifact v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify provenance before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for f in dist/*; do
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY"
+          done
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* \
+              --title "$tag" --generate-notes
+          fi
