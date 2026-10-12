@@ -78,6 +78,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # --- per-OS build dependencies -------------------------------------
+      # The wails3 CLI imports the cgo-backed operatingsystem package, so its
+      # `go install` already needs the GTK/WebKit dev headers on Linux hosts.
+      # The android job is included: bindings are generated for the host.
+      - name: Install GTK4 / WebKitGTK 6.0 (Linux/Android)
+        if: matrix.name == 'linux' || matrix.name == 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          pkg-config --exists gtk4 webkitgtk-6.0
+
       - name: Install wails3
         # The CLI pulls deps that are not in go.sum, so it must be installed
         # with an explicit @version. Resolve that from go.mod to avoid drift.
@@ -86,7 +98,6 @@ jobs:
           version=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
           go install "github.com/wailsapp/wails/v3/cmd/wails3@${version}"
 
-      # --- per-OS build dependencies -------------------------------------
       - name: Install NSIS (Windows)
         if: matrix.name == 'windows'
         shell: pwsh
@@ -95,13 +106,6 @@ jobs:
             choco install nsis -y --no-progress
             Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\NSIS"
           }
-
-      - name: Install GTK4 / WebKitGTK 6.0 (Linux)
-        if: matrix.name == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         if: matrix.name == 'android'
@@ -143,6 +147,7 @@ jobs:
 
       - name: Stamp version
         # Node is cross-platform, so one script covers every runner.
+        shell: bash
         run: |
           node - "$APP_VERSION" <<'NODE'
           const fs = require('fs');
