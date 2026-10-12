@@ -160,16 +160,14 @@ jobs:
           };
           const dq = /(version:\s*")[^"]+(")/;
           edit('build/config.yml', dq, `$1${v}$2`);
-          edit('build/linux/nfpm/nfpm.yaml', dq, `$1${v}$2`);
           const verName = /(versionName\s+")[^"]+(")/;
           edit('build/android/app/build.gradle', verName, `$1${v}$2`);
-          const plistKey = (key) => new RegExp(
-            '(<key>' + key + '</key>\\s*<string>)[^<]+(</string>)'
-          );
-          const ios = 'build/darwin/Info.plist';
-          edit(ios, plistKey('CFBundleShortVersionString'), `$1${v}$2`);
-          edit(ios, plistKey('CFBundleVersion'), `$1${v}$2`);
           NODE
+
+      - name: Sync build assets
+        # Regenerate name/bundle-id/version metadata from build/config.yml so
+        # installers are not named after the Wails template defaults.
+        run: wails3 task common:update:build-assets
 
       # --- build ----------------------------------------------------------
       - name: Package
